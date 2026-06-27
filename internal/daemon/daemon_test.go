@@ -60,6 +60,10 @@ func (f *fakeSender) UpdateMessageProcessStatus(ctx context.Context, messageID s
 	return nil
 }
 
+func matchAllScope(id string) config.Scope {
+	return config.Scope{ID: id, Match: config.MatchConfig{ChannelIDs: []string{"*"}, ThreadIDs: []string{"*"}}}
+}
+
 func TestHandleEventIgnoresOwnMessages(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -88,7 +92,7 @@ func TestHandleEventRoutesAndDedupes(t *testing.T) {
 	r := &fakeRunner{}
 	s := &fakeSender{}
 	d := Daemon{Store: st, Runner: r}
-	scope := config.Scope{ID: "s1", Match: config.MatchConfig{ChannelIDs: []string{"c1"}}}
+	scope := matchAllScope("s1")
 	event := threads.Event{ID: "e1", Cursor: "cur1", Type: "message.created", ChannelID: "c1", ThreadID: "t1", Message: threads.Message{ID: "m1", Content: "hi"}}
 	if err := d.HandleEvent(context.Background(), scope, s, s, event); err != nil {
 		t.Fatal(err)
@@ -131,6 +135,25 @@ func (toolEventRunner) Run(ctx context.Context, scope config.Scope, in runner.In
 	return runner.Output{Text: "done", RunnerSessionID: "runner-s1"}, nil
 }
 
+func TestHandleEventSkipsNonMatchingAllowlist(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	r := &fakeRunner{}
+	s := &fakeSender{}
+	d := Daemon{Store: st, Runner: r}
+	scope := config.Scope{ID: "s1", Match: config.MatchConfig{ChannelIDs: []string{"allowed"}, ThreadIDs: []string{"*"}}}
+	event := threads.Event{ID: "e1", Type: "message.created", ChannelID: "other", Message: threads.Message{ID: "m1", Content: "hi"}}
+	if err := d.HandleEvent(context.Background(), scope, s, s, event); err != nil {
+		t.Fatal(err)
+	}
+	if r.calls != 0 || len(s.sent) != 0 {
+		t.Fatalf("non-matching event should be ignored, calls=%d sent=%d", r.calls, len(s.sent))
+	}
+}
+
 func TestHandleEventCreatesProcessStatusAndKillCancelsRun(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -140,7 +163,7 @@ func TestHandleEventCreatesProcessStatusAndKillCancelsRun(t *testing.T) {
 	s := &fakeSender{}
 	started := make(chan struct{})
 	d := Daemon{Store: st, Runner: blockingRunner{started: started}}
-	scope := config.Scope{ID: "s1", Match: config.MatchConfig{ChannelIDs: []string{"c1"}}}
+	scope := matchAllScope("s1")
 	event := threads.Event{ID: "e1", Type: "message.created", ChannelID: "c1", Message: threads.Message{ID: "m1", Content: "hi", SenderID: "u1"}}
 	done := make(chan error, 1)
 	go func() { done <- d.HandleEvent(context.Background(), scope, s, s, event) }()
@@ -180,7 +203,7 @@ func TestHandleEventStreamsToolEventsAsTriggeredStepMessages(t *testing.T) {
 	defer st.Close()
 	s := &fakeSender{}
 	d := Daemon{Store: st, Runner: toolEventRunner{}}
-	scope := config.Scope{ID: "s1", Match: config.MatchConfig{ChannelIDs: []string{"c1"}}}
+	scope := matchAllScope("s1")
 	event := threads.Event{ID: "e1", Type: "message.created", ChannelID: "c1", Message: threads.Message{ID: "m1", Content: "hi"}}
 	if err := d.HandleEvent(context.Background(), scope, s, s, event); err != nil {
 		t.Fatal(err)
@@ -214,7 +237,7 @@ func TestHandleEventMapsTopLevelMessageToThreadSessionAndRepliesResume(t *testin
 	r := &fakeRunner{}
 	s := &fakeSender{}
 	d := Daemon{Store: st, Runner: r}
-	scope := config.Scope{ID: "s1", Match: config.MatchConfig{ChannelIDs: []string{"c1"}}}
+	scope := matchAllScope("s1")
 
 	root := threads.Event{ID: "e-root", Type: "message.created", ChannelID: "c1", Message: threads.Message{ID: "m-root", Content: "start"}}
 	if err := d.HandleEvent(context.Background(), scope, s, s, root); err != nil {

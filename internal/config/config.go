@@ -28,6 +28,7 @@ type ThreadsConfig struct {
 }
 
 type MatchConfig struct {
+	// Allowlists are deny-by-default: use "*" to match all delivered events.
 	ChannelIDs []string `json:"channel_ids"`
 	ThreadIDs  []string `json:"thread_ids"`
 }
@@ -77,6 +78,13 @@ func Load(path string) (Config, error) {
 			if len(cfg.Scopes[i].Runner.Args) == 0 {
 				cfg.Scopes[i].Runner.Args = []string{"-p", "--verbose", "--output-format", "stream-json"}
 			}
+		case "pi":
+			if cfg.Scopes[i].Runner.Command == "" {
+				cfg.Scopes[i].Runner.Command = "pi"
+			}
+			if len(cfg.Scopes[i].Runner.Args) == 0 {
+				cfg.Scopes[i].Runner.Args = []string{"--mode", "json", "--print"}
+			}
 		default:
 			if cfg.Scopes[i].Runner.Command == "" {
 				cfg.Scopes[i].Runner.Command = "codex"
@@ -104,13 +112,19 @@ func (s Scope) Token() (string, error) {
 }
 
 func (s Scope) Matches(channelID, threadID string) bool {
-	if len(s.Match.ChannelIDs) > 0 && !contains(s.Match.ChannelIDs, channelID) {
+	return matchesAllowlist(s.Match.ChannelIDs, channelID) && matchesAllowlist(s.Match.ThreadIDs, threadID)
+}
+
+func matchesAllowlist(values []string, needle string) bool {
+	if len(values) == 0 {
 		return false
 	}
-	if len(s.Match.ThreadIDs) > 0 && !contains(s.Match.ThreadIDs, threadID) {
-		return false
+	for _, value := range values {
+		if value == "*" || value == needle {
+			return true
+		}
 	}
-	return true
+	return false
 }
 
 func contains(values []string, needle string) bool {

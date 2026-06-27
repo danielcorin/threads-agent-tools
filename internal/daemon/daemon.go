@@ -120,7 +120,7 @@ func (d *Daemon) HandleEvent(ctx context.Context, scope config.Scope, sender Sen
 	if event.Message.Content == "" {
 		return nil
 	}
-	if !scope.Matches(event.ChannelID, event.ThreadID) {
+	if !scope.Matches(event.ChannelID, rootThreadID(event)) {
 		return nil
 	}
 	if scope.Threads.UserID != "" && event.Message.SenderID == scope.Threads.UserID {

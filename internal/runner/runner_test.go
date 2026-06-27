@@ -74,6 +74,21 @@ func TestParseJSONLOutputCapturesSessionIDs(t *testing.T) {
 	if claude.Text != "final" || claude.SessionID != "claude-session" {
 		t.Fatalf("bad claude parse: %+v", claude)
 	}
+	pi := parseJSONLOutput([]byte("{\"type\":\"header\",\"sessionFile\":\"/tmp/pi/session.jsonl\"}\n{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"pi final\"}]}]}\n"))
+	if pi.Text != "pi final" || pi.SessionID != "/tmp/pi/session.jsonl" {
+		t.Fatalf("bad pi parse: %+v", pi)
+	}
+}
+
+func TestParseToolEventsFromPiJSON(t *testing.T) {
+	started, ok := parseToolEvent([]byte(`{"type":"tool_execution_start","toolCallId":"call_1","toolName":"bash","args":{"command":"pwd"}}`))
+	if !ok || started.ID != "call_1" || started.Name != "bash" || started.Status != ToolEventStarted {
+		t.Fatalf("bad pi start event: ok=%v event=%+v", ok, started)
+	}
+	completed, ok := parseToolEvent([]byte(`{"type":"tool_execution_end","toolCallId":"call_1","toolName":"bash","result":{"content":[{"type":"text","text":"ok"}]},"isError":false}`))
+	if !ok || completed.ID != "call_1" || completed.Name != "bash" || completed.Status != ToolEventCompleted || completed.Error {
+		t.Fatalf("bad pi end event: ok=%v event=%+v", ok, completed)
+	}
 }
 
 func TestParseCodexFallbackUsesLastAgentMessage(t *testing.T) {
@@ -111,6 +126,10 @@ func TestBuildResumeArgs(t *testing.T) {
 	claude := config.Scope{Runner: config.RunnerConfig{Type: "claude-code", Args: []string{"-p", "--verbose", "--output-format", "stream-json"}}}
 	if got, want := buildArgs(claude, "claude-session"), []string{"-p", "--verbose", "--output-format", "stream-json", "--resume", "claude-session"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("claude args got %#v want %#v", got, want)
+	}
+	pi := config.Scope{Runner: config.RunnerConfig{Type: "pi", Args: []string{"--mode", "json", "--print"}}, Safety: config.SafetyConfig{Mode: "read-only"}}
+	if got, want := buildArgs(pi, "/tmp/pi/session.jsonl"), []string{"--mode", "json", "--print", "--tools", "read,grep,find,ls", "--session", "/tmp/pi/session.jsonl"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("pi args got %#v want %#v", got, want)
 	}
 }
 

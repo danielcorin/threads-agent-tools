@@ -8,19 +8,26 @@
         "token_env": "THREADS_CODEX_TOKEN",
         "user_id": "CODEX_BOT_USER_ID"
       },
-      "match": {
-        "channel_ids": ["CHANNEL_ID"],
-        "thread_ids": []
-      },
       "runner": {
         "type": "codex",
         "command": "codex",
-        "args": ["exec", "--json"],
+        "args": [
+          "exec",
+          "--json"
+        ],
         "working_dir": "/Users/dancorin/dev"
       },
       "safety": {
         "mode": "read-only",
         "allowed_tools": []
+      },
+      "match": {
+        "channel_ids": [
+          "*"
+        ],
+        "thread_ids": [
+          "*"
+        ]
       }
     },
     {
@@ -30,19 +37,63 @@
         "token_env": "THREADS_CLAUDE_CODE_TOKEN",
         "user_id": "CLAUDE_CODE_BOT_USER_ID"
       },
-      "match": {
-        "channel_ids": ["CHANNEL_ID"],
-        "thread_ids": []
-      },
       "runner": {
         "type": "claude-code",
         "command": "npx",
-        "args": ["-y", "@anthropic-ai/claude-code", "-p", "--verbose", "--output-format", "stream-json"],
+        "args": [
+          "-y",
+          "@anthropic-ai/claude-code",
+          "-p",
+          "--verbose",
+          "--output-format",
+          "stream-json"
+        ],
         "working_dir": "/Users/dancorin/dev"
       },
       "safety": {
         "mode": "read-only",
-        "allowed_tools": ["Read", "Bash(git status:*)"]
+        "allowed_tools": [
+          "Read",
+          "Bash(git status:*)"
+        ]
+      },
+      "match": {
+        "channel_ids": [
+          "*"
+        ],
+        "thread_ids": [
+          "*"
+        ]
+      }
+    },
+    {
+      "id": "personal-pi",
+      "threads": {
+        "base_url": "https://threads-api.filae.site",
+        "token_env": "THREADS_PI_TOKEN",
+        "user_id": "PI_BOT_USER_ID"
+      },
+      "runner": {
+        "type": "pi",
+        "command": "pi",
+        "args": [
+          "--mode",
+          "json",
+          "--print"
+        ],
+        "working_dir": "/Users/dancorin/dev"
+      },
+      "safety": {
+        "mode": "read-only",
+        "allowed_tools": []
+      },
+      "match": {
+        "channel_ids": [
+          "*"
+        ],
+        "thread_ids": [
+          "*"
+        ]
       }
     }
   ]

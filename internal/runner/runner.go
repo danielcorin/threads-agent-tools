@@ -89,10 +89,14 @@ func (LocalRunner) Run(ctx context.Context, scope config.Scope, input Input) (Ou
 
 func buildArgs(scope config.Scope, sessionID string) []string {
 	args := append([]string{}, scope.Runner.Args...)
-	if scope.Runner.Type == "claude-code" {
+	switch scope.Runner.Type {
+	case "claude-code":
 		return buildClaudeArgs(args, scope.Safety, sessionID)
+	case "pi":
+		return buildPiArgs(args, scope.Safety, sessionID)
+	default:
+		return buildCodexArgs(args, scope.Safety, sessionID)
 	}
-	return buildCodexArgs(args, scope.Safety, sessionID)
 }
 
 func buildCodexArgs(args []string, safety config.SafetyConfig, sessionID string) []string {
@@ -142,6 +146,19 @@ func buildClaudeArgs(args []string, safety config.SafetyConfig, sessionID string
 	}
 	if sessionID != "" {
 		args = append(args, "--resume", sessionID)
+	}
+	return args
+}
+
+func buildPiArgs(args []string, safety config.SafetyConfig, sessionID string) []string {
+	if safety.Mode == "read-only" && len(safety.AllowedTools) == 0 {
+		args = append(args, "--tools", "read,grep,find,ls")
+	}
+	if len(safety.AllowedTools) > 0 {
+		args = append(args, "--tools", strings.Join(safety.AllowedTools, ","))
+	}
+	if sessionID != "" {
+		args = append(args, "--session", sessionID)
 	}
 	return args
 }
@@ -244,6 +261,9 @@ func parseToolEvent(line []byte) (ToolEvent, bool) {
 	if event, ok := parseClaudeToolEvent(obj); ok {
 		return event, true
 	}
+	if event, ok := parsePiToolEvent(obj); ok {
+		return event, true
+	}
 	if event, ok := parseCodexToolEvent(obj); ok {
 		return event, true
 	}
@@ -277,6 +297,56 @@ func parseClaudeToolEvent(obj map[string]any) (ToolEvent, bool) {
 		}
 	}
 	return ToolEvent{}, false
+}
+
+func parsePiToolEvent(obj map[string]any) (ToolEvent, bool) {
+	typeName := firstString(obj, "type")
+	switch typeName {
+	case "tool_execution_start":
+		name := firstString(obj, "toolName", "tool_name", "name")
+		if name == "" {
+			return ToolEvent{}, false
+		}
+		return ToolEvent{ID: firstString(obj, "toolCallId", "tool_call_id", "id"), Name: name, Input: firstPresent(obj, "args", "input", "arguments"), Status: ToolEventStarted}, true
+	case "tool_execution_update":
+		name := firstString(obj, "toolName", "tool_name", "name")
+		if name == "" {
+			return ToolEvent{}, false
+		}
+		return ToolEvent{ID: firstString(obj, "toolCallId", "tool_call_id", "id"), Name: name, Input: firstPresent(obj, "args", "input", "arguments"), Output: firstPresent(obj, "partialResult", "partial_result"), Status: ToolEventStarted}, true
+	case "tool_execution_end":
+		name := firstString(obj, "toolName", "tool_name", "name")
+		if name == "" {
+			return ToolEvent{}, false
+		}
+		return ToolEvent{ID: firstString(obj, "toolCallId", "tool_call_id", "id"), Name: name, Output: firstPresent(obj, "result", "output"), Status: ToolEventCompleted, Error: truthy(obj["isError"]) || truthy(obj["is_error"])}, true
+	case "message_update":
+		delta, _ := obj["assistantMessageEvent"].(map[string]any)
+		if delta == nil {
+			return ToolEvent{}, false
+		}
+		deltaType := firstString(delta, "type")
+		toolCall, _ := delta["toolCall"].(map[string]any)
+		switch deltaType {
+		case "toolcall_start":
+			partial, _ := delta["partial"].(map[string]any)
+			return piToolCallFromMaps(ToolEventStarted, partial, nil)
+		case "toolcall_end":
+			return piToolCallFromMaps(ToolEventCompleted, toolCall, nil)
+		}
+	}
+	return ToolEvent{}, false
+}
+
+func piToolCallFromMaps(status ToolEventStatus, toolCall map[string]any, output any) (ToolEvent, bool) {
+	if toolCall == nil {
+		return ToolEvent{}, false
+	}
+	name := firstString(toolCall, "name", "toolName", "tool_name")
+	if name == "" {
+		return ToolEvent{}, false
+	}
+	return ToolEvent{ID: firstString(toolCall, "id", "toolCallId", "tool_call_id"), Name: name, Input: firstPresent(toolCall, "arguments", "args", "input"), Output: output, Status: status}, true
 }
 
 func parseCodexToolEvent(obj map[string]any) (ToolEvent, bool) {
@@ -354,7 +424,18 @@ func parseJSONLOutput(data []byte) parsedJSONLOutput {
 			continue
 		}
 		if sessionID == "" {
-			sessionID = firstString(obj, "session_id", "thread_id")
+			sessionID = firstString(obj, "session_id", "thread_id", "sessionId", "sessionFile")
+		}
+		if typeName := firstString(obj, "type"); typeName == "agent_end" {
+			if text := lastAssistantTextFromMessages(obj["messages"]); text != "" {
+				parts = append(parts, text)
+			}
+			continue
+		} else if typeName == "message_end" {
+			if text := assistantTextFromMessage(obj["message"]); text != "" {
+				lastAgentMessage = text
+			}
+			continue
 		}
 		if value, ok := obj["result"].(string); ok && strings.TrimSpace(value) != "" {
 			results = append(results, strings.TrimSpace(value))
@@ -398,6 +479,41 @@ func parseJSONLOutput(data []byte) parsedJSONLOutput {
 		text = strings.Join(results, "\n")
 	}
 	return parsedJSONLOutput{Text: text, SessionID: sessionID}
+}
+
+func lastAssistantTextFromMessages(value any) string {
+	messages, ok := value.([]any)
+	if !ok {
+		return ""
+	}
+	for i := len(messages) - 1; i >= 0; i-- {
+		if text := assistantTextFromMessage(messages[i]); text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func assistantTextFromMessage(value any) string {
+	message, ok := value.(map[string]any)
+	if !ok || firstString(message, "role") != "assistant" {
+		return ""
+	}
+	content, ok := message["content"].([]any)
+	if !ok {
+		return ""
+	}
+	var parts []string
+	for _, part := range content {
+		partObj, ok := part.(map[string]any)
+		if !ok || firstString(partObj, "type") != "text" {
+			continue
+		}
+		if text := firstString(partObj, "text"); text != "" {
+			parts = append(parts, text)
+		}
+	}
+	return strings.TrimSpace(strings.Join(parts, "\n"))
 }
 
 func firstString(obj map[string]any, keys ...string) string {
