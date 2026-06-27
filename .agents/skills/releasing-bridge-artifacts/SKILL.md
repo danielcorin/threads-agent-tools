@@ -95,12 +95,77 @@ If possible, run a local end-to-end smoke test against a non-production Threads 
 4. Send one routed Threads message and verify the expected agent responds.
 5. Verify cancellation and error surfacing if the release changes runner/process behavior.
 
-### 5. Publish the release
+### 5. Write release notes from new commits
+
+Before tagging, write release notes based on the commits that will be included in the release. Compare the last published tag to `HEAD`, then translate commit-level changes into user-facing bullets:
+
+```bash
+VERSION=v0.2.0
+PREVIOUS_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
+
+if [ -n "$PREVIOUS_TAG" ]; then
+  git log --oneline --decorate "$PREVIOUS_TAG"..HEAD
+else
+  git log --oneline --decorate
+fi
+```
+
+If the previous release is unclear, inspect GitHub releases too:
+
+```bash
+gh release list --limit 10
+```
+
+Create the notes before `gh release create` so the release has a real changelog instead of a placeholder:
+
+```bash
+cat > "dist/RELEASE_NOTES_${VERSION}.md" <<'EOF'
+# threads-agent-bridge v0.2.0
+
+## What's new
+- User-facing summary of the most important new capability.
+- Another user-facing change from commits since the previous tag.
+
+## Fixes and improvements
+- Notable bug fixes, reliability improvements, docs, or packaging changes.
+
+## Supported downloads
+- darwin/arm64
+- darwin/amd64
+- linux/amd64
+- linux/arm64
+
+## Install or update
+1. Download the archive for your OS/arch.
+2. Unpack it somewhere stable.
+3. Copy or update `config.example.json` to your local config.
+4. Provide your Threads bot token and local agent CLI credentials.
+5. Start `./threads-agent-bridge -config config.json`.
+
+## Notes
+- Users must provide their own Threads bot token and local agent CLI credentials.
+- Call out any skipped platforms, migration steps, or known limitations.
+EOF
+```
+
+Release notes should include:
+
+- A brief summary derived from the commit range being released, not from memory alone.
+- What changed, in user terms.
+- Supported platforms and download names.
+- Install/update steps.
+- Required config fields and token setup link/summary.
+- Known limitations, especially OS-specific service setup.
+- A warning that users must provide their own Threads bot token and local agent CLI credentials.
+
+Do not include raw internal-only commit details unless they help users install, configure, debug, or decide whether to upgrade.
+
+### 6. Publish the release
 
 For GitHub releases, prefer the GitHub CLI. Check for an existing tag/release first so a retry does not fail halfway through:
 
 ```bash
-VERSION=v0.1.0
+VERSION=v0.2.0
 
 git fetch --tags origin
 if git rev-parse "$VERSION" >/dev/null 2>&1 || gh release view "$VERSION" >/dev/null 2>&1; then
@@ -108,11 +173,7 @@ if git rev-parse "$VERSION" >/dev/null 2>&1 || gh release view "$VERSION" >/dev/
   exit 1
 fi
 
-cat > "dist/RELEASE_NOTES_${VERSION}.md" <<'EOF'
-# threads-agent-bridge v0.1.0
-
-...
-EOF
+test -s "dist/RELEASE_NOTES_${VERSION}.md"
 
 git tag "$VERSION"
 git push origin "$VERSION"
@@ -126,16 +187,7 @@ gh release create "$VERSION" \
 
 If the tag push succeeds but release creation/upload fails, do not recreate the tag. Fix the issue, then use `gh release create` if no release exists yet, or `gh release upload <tag> <assets...> --clobber` if the release exists with missing/bad assets.
 
-Release notes should include:
-
-- What changed, in user terms.
-- Supported platforms.
-- Install/update steps.
-- Required config fields and token setup link/summary.
-- Known limitations, especially OS-specific service setup.
-- A warning that users must provide their own Threads bot token and local agent CLI credentials.
-
-### 6. Give users minimal install instructions
+### 7. Give users minimal install instructions
 
 A release should tell users to:
 
@@ -154,7 +206,7 @@ A release should tell users to:
    - macOS: LaunchAgent.
    - Linux: systemd user service.
 
-### 7. Verify repository hygiene before committing release work
+### 8. Verify repository hygiene before committing release work
 
 Before committing release scripts/workflows/docs:
 
