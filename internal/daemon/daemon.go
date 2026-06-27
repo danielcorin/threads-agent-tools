@@ -27,6 +27,10 @@ type Sender interface {
 	SendMessage(context.Context, string, threads.SendMessageRequest) error
 }
 
+type Reactor interface {
+	AddReaction(context.Context, string, string) error
+}
+
 type ProcessClient interface {
 	CreateProcess(context.Context, threads.CreateProcessRequest) (threads.CreateProcessResponse, error)
 	UpdateProcess(context.Context, string, threads.UpdateProcessRequest) error
@@ -114,16 +118,22 @@ func (d *Daemon) HandleEvent(ctx context.Context, scope config.Scope, sender Sen
 	if event.Cursor != "" {
 		defer d.Store.SaveCursor(context.WithoutCancel(ctx), scope.ID, event.Cursor)
 	}
-	if event.Type != "message.created" && event.Type != "message.invoked" && event.Type != "message" {
+	messageEvent := isMessageEvent(event)
+	reactionEvent := isReactionEvent(event)
+	if !messageEvent && !reactionEvent {
 		return nil
 	}
-	if event.Message.Content == "" {
+	if messageEvent && event.Message.Content == "" {
 		return nil
 	}
-	if !scope.Matches(event.ChannelID, rootThreadID(event)) {
+	threadID := rootThreadID(event)
+	if messageEvent && !scope.Matches(event.ChannelID, threadID) {
 		return nil
 	}
-	if scope.Threads.UserID != "" && event.Message.SenderID == scope.Threads.UserID {
+	if reactionEvent && !reactionTargetsScope(scope, event.ChannelID, threadID, event.Message.SenderID) {
+		return nil
+	}
+	if messageEvent && scope.Threads.UserID != "" && event.Message.SenderID == scope.Threads.UserID {
 		return nil
 	}
 	eventID := event.ID
@@ -134,7 +144,6 @@ func (d *Daemon) HandleEvent(ctx context.Context, scope config.Scope, sender Sen
 	if err != nil || !fresh {
 		return err
 	}
-	threadID := rootThreadID(event)
 	runnerSessionID, err := d.Store.RunnerSessionID(ctx, scope.ID, event.ChannelID, threadID)
 	if err != nil {
 		return err
@@ -164,16 +173,36 @@ func (d *Daemon) HandleEvent(ctx context.Context, scope config.Scope, sender Sen
 		}
 		if processes != nil {
 			_ = processes.UpdateProcess(context.WithoutCancel(ctx), processID, threads.UpdateProcessRequest{Status: status})
-			_ = processes.UpdateMessageProcessStatus(context.WithoutCancel(ctx), event.Message.ID, threads.UpdateMessageProcessStatusRequest{ProcessID: processID, Status: status})
+			_ = processes.UpdateMessageProcessStatus(context.WithoutCancel(ctx), event.Message.ID, threads.UpdateMessageProcessStatusRequest{ProcessID: processID, Status: status, ErrorText: err.Error()})
 		}
 		if status == "killed" {
 			return nil
+		}
+		if sendErr := sender.SendMessage(context.WithoutCancel(ctx), event.ChannelID, threads.SendMessageRequest{Content: runnerErrorMessage(err), ThreadID: threadID, MessageType: "error", Metadata: map[string]any{"source": "threads-agent-bridge", "kind": "error", "scope_id": scope.ID, "process_id": processID}}); sendErr != nil {
+			if d.Logger != nil {
+				d.Logger.Warn("send runner error", "scope", scope.ID, "error", sendErr)
+			}
 		}
 		return err
 	}
 	if out.RunnerSessionID != "" && out.RunnerSessionID != runnerSessionID {
 		if err := d.Store.SaveRunnerSessionID(ctx, scope.ID, event.ChannelID, threadID, out.RunnerSessionID); err != nil {
 			return err
+		}
+	}
+	if len(out.Reactions) > 0 {
+		if reactor, ok := sender.(Reactor); ok {
+			for _, reaction := range out.Reactions {
+				if err := reactor.AddReaction(ctx, reaction.MessageID, reaction.Emoji); err != nil {
+					if processes != nil {
+						_ = processes.UpdateProcess(context.WithoutCancel(ctx), processID, threads.UpdateProcessRequest{Status: "error"})
+						_ = processes.UpdateMessageProcessStatus(context.WithoutCancel(ctx), event.Message.ID, threads.UpdateMessageProcessStatusRequest{ProcessID: processID, Status: "error", ErrorText: err.Error()})
+					}
+					return err
+				}
+			}
+		} else if d.Logger != nil {
+			d.Logger.Warn("structured reactions requested but sender cannot react", "scope", scope.ID)
 		}
 	}
 	if out.Text != "" {
@@ -193,6 +222,18 @@ func (d *Daemon) HandleEvent(ctx context.Context, scope config.Scope, sender Sen
 		_ = processes.UpdateMessageProcessStatus(context.WithoutCancel(ctx), event.Message.ID, threads.UpdateMessageProcessStatusRequest{ProcessID: processID, Status: "done"})
 	}
 	return nil
+}
+
+func runnerErrorMessage(err error) string {
+	msg := strings.TrimSpace(err.Error())
+	if msg == "" {
+		msg = "unknown runner error"
+	}
+	const maxLen = 2000
+	if len(msg) > maxLen {
+		msg = msg[:maxLen] + "…"
+	}
+	return fmt.Sprintf("⚠️ Agent error: %s", msg)
 }
 
 func (d *Daemon) toolEventHandler(scope config.Scope, sender Sender, processes ProcessClient, processID string, event threads.Event, threadID string) runner.ToolEventHandler {
@@ -328,6 +369,21 @@ func rootThreadID(event threads.Event) string {
 		return event.ThreadID
 	}
 	return event.Message.ID
+}
+
+func isMessageEvent(event threads.Event) bool {
+	return event.Type == "message.created" || event.Type == "message.invoked" || event.Type == "message"
+}
+
+func isReactionEvent(event threads.Event) bool {
+	return event.Type == "reaction_added" || event.Type == "reaction.created" || event.Type == "reaction"
+}
+
+func reactionTargetsScope(scope config.Scope, channelID, threadID, messageSenderID string) bool {
+	if scope.Threads.UserID == "" || messageSenderID != scope.Threads.UserID {
+		return false
+	}
+	return scope.Matches(channelID, threadID)
 }
 
 func (d *Daemon) trackProcess(processID string, cancel context.CancelFunc) {

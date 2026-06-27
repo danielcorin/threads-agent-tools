@@ -38,6 +38,8 @@ type RunnerConfig struct {
 	Command    string   `json:"command"`
 	Args       []string `json:"args"`
 	WorkingDir string   `json:"working_dir"`
+	// Structured enables JSON final-output handling: {"content":"...","reactions":[{"message_id":"...","emoji":"👍"}]}.
+	Structured bool `json:"structured"`
 }
 
 type SafetyConfig struct {

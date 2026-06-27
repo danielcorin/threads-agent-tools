@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -33,10 +34,16 @@ type fakeSender struct {
 	updated         []threads.UpdateProcessRequest
 	activities      []threads.ProcessActivityRequest
 	messageStatuses []threads.UpdateMessageProcessStatusRequest
+	reactions       []runner.Reaction
 }
 
 func (f *fakeSender) SendMessage(ctx context.Context, channelID string, req threads.SendMessageRequest) error {
 	f.sent = append(f.sent, req)
+	return nil
+}
+
+func (f *fakeSender) AddReaction(ctx context.Context, messageID, emoji string) error {
+	f.reactions = append(f.reactions, runner.Reaction{MessageID: messageID, Emoji: emoji})
 	return nil
 }
 
@@ -125,6 +132,12 @@ func (r blockingRunner) Run(ctx context.Context, scope config.Scope, in runner.I
 	return runner.Output{}, ctx.Err()
 }
 
+type structuredRunner struct{}
+
+func (structuredRunner) Run(ctx context.Context, scope config.Scope, in runner.Input) (runner.Output, error) {
+	return runner.Output{Text: "done", RunnerSessionID: "runner-s1", Reactions: []runner.Reaction{{MessageID: in.Event.Message.ID, Emoji: "✅"}}}, nil
+}
+
 type toolEventRunner struct{}
 
 func (toolEventRunner) Run(ctx context.Context, scope config.Scope, in runner.Input) (runner.Output, error) {
@@ -133,6 +146,53 @@ func (toolEventRunner) Run(ctx context.Context, scope config.Scope, in runner.In
 		_ = in.OnToolEvent(ctx, runner.ToolEvent{ID: "tool-1", Name: "Bash", Output: "clean", Status: runner.ToolEventCompleted})
 	}
 	return runner.Output{Text: "done", RunnerSessionID: "runner-s1"}, nil
+}
+
+type errorRunner struct{}
+
+func (errorRunner) Run(ctx context.Context, scope config.Scope, in runner.Input) (runner.Output, error) {
+	return runner.Output{}, errors.New("OpenRouter error: 402 insufficient credits")
+}
+
+func TestHandleEventInvokesOnAnyReactionToScopeBotMessage(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	r := &fakeRunner{}
+	s := &fakeSender{}
+	d := Daemon{Store: st, Runner: r}
+	scope := config.Scope{ID: "s1", Threads: config.ThreadsConfig{UserID: "bot-1"}, Match: config.MatchConfig{ChannelIDs: []string{"*"}, ThreadIDs: []string{"*"}}}
+	event := threads.Event{ID: "e1", Type: "reaction_added", ChannelID: "c1", Emoji: "👍", Message: threads.Message{ID: "m1", SenderID: "bot-1"}}
+	if err := d.HandleEvent(context.Background(), scope, s, s, event); err != nil {
+		t.Fatal(err)
+	}
+	if r.calls != 1 || len(s.sent) != 1 {
+		t.Fatalf("reaction should invoke runner, calls=%d sent=%d", r.calls, len(s.sent))
+	}
+	if r.inputs[0].Event.Emoji != "👍" || r.inputs[0].ThreadID != "m1" {
+		t.Fatalf("bad reaction input: %+v", r.inputs[0])
+	}
+}
+
+func TestHandleEventSkipsReactionToOtherUserMessage(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	r := &fakeRunner{}
+	s := &fakeSender{}
+	d := Daemon{Store: st, Runner: r}
+	scope := config.Scope{ID: "s1", Threads: config.ThreadsConfig{UserID: "bot-1"}, Match: config.MatchConfig{ChannelIDs: []string{"*"}, ThreadIDs: []string{"*"}}}
+	event := threads.Event{ID: "e1", Type: "reaction_added", ChannelID: "c1", Emoji: "👍", Message: threads.Message{ID: "m1", SenderID: "user-1"}}
+	if err := d.HandleEvent(context.Background(), scope, s, s, event); err != nil {
+		t.Fatal(err)
+	}
+	if r.calls != 0 || len(s.sent) != 0 {
+		t.Fatalf("reaction to other user message should be ignored, calls=%d sent=%d", r.calls, len(s.sent))
+	}
 }
 
 func TestHandleEventSkipsNonMatchingAllowlist(t *testing.T) {
@@ -192,6 +252,51 @@ func TestHandleEventCreatesProcessStatusAndKillCancelsRun(t *testing.T) {
 	}
 	if got := s.messageStatuses[len(s.messageStatuses)-1].Status; got != "killed" {
 		t.Fatalf("message status=%q, want killed", got)
+	}
+}
+
+func TestHandleEventAppliesStructuredReactions(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	s := &fakeSender{}
+	d := Daemon{Store: st, Runner: structuredRunner{}}
+	scope := matchAllScope("s1")
+	event := threads.Event{ID: "e1", Type: "message.created", ChannelID: "c1", Message: threads.Message{ID: "m1", Content: "hi"}}
+	if err := d.HandleEvent(context.Background(), scope, s, s, event); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.reactions) != 1 || s.reactions[0].MessageID != "m1" || s.reactions[0].Emoji != "✅" {
+		t.Fatalf("bad reactions: %+v", s.reactions)
+	}
+	if len(s.sent) != 1 || s.sent[0].Content != "done" {
+		t.Fatalf("bad final message: %+v", s.sent)
+	}
+}
+
+func TestHandleEventSurfacesRunnerErrorsInThreads(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	s := &fakeSender{}
+	d := Daemon{Store: st, Runner: errorRunner{}}
+	scope := matchAllScope("s1")
+	event := threads.Event{ID: "e1", Type: "message.created", ChannelID: "c1", Message: threads.Message{ID: "m1", Content: "hi"}}
+	if err := d.HandleEvent(context.Background(), scope, s, s, event); err == nil {
+		t.Fatal("expected runner error")
+	}
+	if len(s.sent) != 1 {
+		t.Fatalf("sent=%d %+v", len(s.sent), s.sent)
+	}
+	if s.sent[0].MessageType != "error" || s.sent[0].ThreadID != "m1" || !strings.Contains(s.sent[0].Content, "OpenRouter error: 402 insufficient credits") {
+		t.Fatalf("bad error message: %+v", s.sent[0])
+	}
+	if len(s.messageStatuses) == 0 || s.messageStatuses[len(s.messageStatuses)-1].Status != "error" || !strings.Contains(s.messageStatuses[len(s.messageStatuses)-1].ErrorText, "OpenRouter error") {
+		t.Fatalf("bad message status: %+v", s.messageStatuses)
 	}
 }
 

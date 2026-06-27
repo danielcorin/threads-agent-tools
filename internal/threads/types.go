@@ -3,14 +3,16 @@ package threads
 import "encoding/json"
 
 type Event struct {
-	ID        string  `json:"id"`
-	Cursor    string  `json:"cursor"`
-	Type      string  `json:"type"`
-	ChannelID string  `json:"channelId"`
-	ThreadID  string  `json:"threadId"`
-	MessageID string  `json:"messageId"`
-	ProcessID string  `json:"processId"`
-	Message   Message `json:"message"`
+	ID        string         `json:"id"`
+	Cursor    string         `json:"cursor"`
+	Type      string         `json:"type"`
+	ChannelID string         `json:"channelId"`
+	ThreadID  string         `json:"threadId"`
+	MessageID string         `json:"messageId"`
+	ProcessID string         `json:"processId"`
+	Emoji     string         `json:"emoji"`
+	Metadata  map[string]any `json:"metadata"`
+	Message   Message        `json:"message"`
 }
 
 type Message struct {
@@ -28,6 +30,7 @@ func (e *Event) UnmarshalJSON(data []byte) error {
 		MessageID      string          `json:"messageId"`
 		MessageIDSnake string          `json:"message_id"`
 		ProcessIDSnake string          `json:"process_id"`
+		EmojiSnake     string          `json:"reaction_emoji"`
 		UserID         string          `json:"userId"`
 		UserIDSnake    string          `json:"user_id"`
 		Content        string          `json:"content"`
@@ -75,6 +78,9 @@ func (e *Event) UnmarshalJSON(data []byte) error {
 	}
 	if e.ProcessID == "" {
 		e.ProcessID = raw.ProcessIDSnake
+	}
+	if e.Emoji == "" {
+		e.Emoji = raw.EmojiSnake
 	}
 	if e.Message.ID == "" {
 		switch {

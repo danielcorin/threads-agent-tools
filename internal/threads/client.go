@@ -171,6 +171,11 @@ func (c Client) SendMessage(ctx context.Context, channelID string, req SendMessa
 	return c.doJSON(ctx, http.MethodPost, u, req, nil, "threads send message")
 }
 
+func (c Client) AddReaction(ctx context.Context, messageID, emoji string) error {
+	u := strings.TrimRight(c.BaseURL, "/") + "/messages/" + url.PathEscape(messageID) + "/reactions"
+	return c.doJSON(ctx, http.MethodPost, u, map[string]string{"emoji": emoji}, nil, "threads add reaction")
+}
+
 func (c Client) CreateProcess(ctx context.Context, req CreateProcessRequest) (CreateProcessResponse, error) {
 	var out CreateProcessResponse
 	u := strings.TrimRight(c.BaseURL, "/") + "/processes"

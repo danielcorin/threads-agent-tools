@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -26,6 +27,12 @@ type Input struct {
 type Output struct {
 	Text            string
 	RunnerSessionID string
+	Reactions       []Reaction
+}
+
+type Reaction struct {
+	MessageID string `json:"message_id"`
+	Emoji     string `json:"emoji"`
 }
 
 type ToolEventStatus string
@@ -54,12 +61,16 @@ type LocalRunner struct{}
 
 func (LocalRunner) Run(ctx context.Context, scope config.Scope, input Input) (Output, error) {
 	args := buildArgs(scope, input.RunnerSessionID)
+	prompt := buildPrompt(scope, input)
+	if scope.Runner.Type == "pi" {
+		args = append(args, "--append-system-prompt", buildBridgeInstructions(scope, input))
+		prompt = buildUserPrompt(input)
+	}
 	cmd := exec.CommandContext(ctx, scope.Runner.Command, args...)
 	if scope.Runner.WorkingDir != "" {
 		cmd.Dir = scope.Runner.WorkingDir
 	}
 	cmd.Env = agentEnv(scope, input)
-	prompt := buildPrompt(input)
 	cmd.Stdin = strings.NewReader(prompt)
 	var stdout, stderr bytes.Buffer
 	stdoutPipe, err := cmd.StdoutPipe()
@@ -81,10 +92,17 @@ func (LocalRunner) Run(ctx context.Context, scope config.Scope, input Input) (Ou
 		return Output{}, scanErr
 	}
 	parsed := parseJSONLOutput(stdout.Bytes())
-	if parsed.Text == "" {
+	if parsed.Text == "" && parsed.Error != "" {
+		return Output{}, errors.New(parsed.Error)
+	}
+	if parsed.Text == "" && !parsed.SawJSON {
 		parsed.Text = strings.TrimSpace(stdout.String())
 	}
-	return Output{Text: parsed.Text, RunnerSessionID: parsed.SessionID}, nil
+	out := Output{Text: parsed.Text, RunnerSessionID: parsed.SessionID}
+	if scope.Runner.Structured {
+		out = parseStructuredOutput(out)
+	}
+	return out, nil
 }
 
 func buildArgs(scope config.Scope, sessionID string) []string {
@@ -163,7 +181,11 @@ func buildPiArgs(args []string, safety config.SafetyConfig, sessionID string) []
 	return args
 }
 
-func buildPrompt(input Input) string {
+func buildPrompt(scope config.Scope, input Input) string {
+	return buildBridgeInstructions(scope, input) + "\n" + buildUserPrompt(input)
+}
+
+func buildBridgeInstructions(scope config.Scope, input Input) string {
 	var b strings.Builder
 	b.WriteString("You are running inside a Threads agent bridge session.\n")
 	if input.NewSession {
@@ -171,11 +193,29 @@ func buildPrompt(input Input) string {
 	} else {
 		b.WriteString("This is a reply in an existing Threads thread; continue the existing agent conversation/session.\n")
 	}
-	b.WriteString("The current Threads context is available in environment variables: THREADS_BASE_URL, THREADS_API_TOKEN, THREADS_CHANNEL_ID, THREADS_THREAD_ID, THREADS_MESSAGE_ID, THREADS_SCOPE_ID, and THREADS_RUNNER_SESSION_ID.\n")
+	b.WriteString("The current Threads context is available in environment variables: THREADS_BASE_URL, THREADS_API_TOKEN, THREADS_CHANNEL_ID, THREADS_THREAD_ID, THREADS_MESSAGE_ID, THREADS_SCOPE_ID, THREADS_RUNNER_SESSION_ID, and THREADS_REACTION_EMOJI when applicable.\n")
 	b.WriteString("If useful, send interim progress or artifact messages before your final answer with: threads send --content \"...\".\n")
-	b.WriteString("Treat `threads send` as a side effect only; still write your final answer to stdout when finished so the bridge can post the final response.\n\n")
+	b.WriteString("You can react to any Threads message by id with: threads react --message-id \"$THREADS_MESSAGE_ID\" --emoji \"👍\". Replace $THREADS_MESSAGE_ID with another message id when you need to react elsewhere.\n")
+	b.WriteString("Treat `threads send` and `threads react` as side effects only; still write your final answer to stdout when finished so the bridge can post the final response.\n")
+	if input.Event.Emoji != "" {
+		b.WriteString("This run was invoked by an emoji reaction. THREADS_REACTION_EMOJI contains the triggering emoji, and THREADS_MESSAGE_ID is the reacted-to message.\n")
+	}
+	if scope.Runner.Structured {
+		b.WriteString("Structured final-output mode is enabled. For the final answer, write either plain text or a single JSON object like {\"content\":\"message to post\",\"reactions\":[{\"message_id\":\"$THREADS_MESSAGE_ID\",\"emoji\":\"👍\"}]}. Use reactions only when they add value.\n")
+	}
+	return b.String()
+}
+
+func buildUserPrompt(input Input) string {
+	var b strings.Builder
 	b.WriteString("User message:\n")
-	b.WriteString(strings.TrimSpace(input.Event.Message.Content))
+	if input.Event.Message.Content != "" {
+		b.WriteString(strings.TrimSpace(input.Event.Message.Content))
+	} else if input.Event.Emoji != "" {
+		b.WriteString("[Emoji reaction trigger: ")
+		b.WriteString(input.Event.Emoji)
+		b.WriteString("]")
+	}
 	b.WriteString("\n")
 	return b.String()
 }
@@ -196,6 +236,7 @@ func agentEnv(scope config.Scope, input Input) []string {
 	add("THREADS_CHANNEL_ID", input.Event.ChannelID)
 	add("THREADS_THREAD_ID", input.ThreadID)
 	add("THREADS_MESSAGE_ID", input.Event.Message.ID)
+	add("THREADS_REACTION_EMOJI", input.Event.Emoji)
 	add("THREADS_SCOPE_ID", input.ScopeID)
 	add("THREADS_RUNNER_SESSION_ID", input.RunnerSessionID)
 	return env
@@ -214,9 +255,37 @@ func (e errWithStderr) Unwrap() error { return e.err }
 type parsedJSONLOutput struct {
 	Text      string
 	SessionID string
+	SawJSON   bool
+	Error     string
 }
 
 func parseJSONLText(data []byte) string { return parseJSONLOutput(data).Text }
+
+func parseStructuredOutput(out Output) Output {
+	text := strings.TrimSpace(out.Text)
+	if text == "" || !strings.HasPrefix(text, "{") {
+		return out
+	}
+	var payload struct {
+		Content   string     `json:"content"`
+		Text      string     `json:"text"`
+		Reactions []Reaction `json:"reactions"`
+	}
+	if err := json.Unmarshal([]byte(text), &payload); err != nil {
+		return out
+	}
+	if strings.TrimSpace(payload.Content) != "" {
+		out.Text = strings.TrimSpace(payload.Content)
+	} else {
+		out.Text = strings.TrimSpace(payload.Text)
+	}
+	for _, reaction := range payload.Reactions {
+		if strings.TrimSpace(reaction.MessageID) != "" && strings.TrimSpace(reaction.Emoji) != "" {
+			out.Reactions = append(out.Reactions, Reaction{MessageID: strings.TrimSpace(reaction.MessageID), Emoji: strings.TrimSpace(reaction.Emoji)})
+		}
+	}
+	return out
+}
 
 func scanRunnerOutput(ctx context.Context, r io.Reader, dst *bytes.Buffer, onToolEvent ToolEventHandler) error {
 	s := bufio.NewScanner(r)
@@ -326,16 +395,37 @@ func parsePiToolEvent(obj map[string]any) (ToolEvent, bool) {
 			return ToolEvent{}, false
 		}
 		deltaType := firstString(delta, "type")
-		toolCall, _ := delta["toolCall"].(map[string]any)
 		switch deltaType {
-		case "toolcall_start":
-			partial, _ := delta["partial"].(map[string]any)
-			return piToolCallFromMaps(ToolEventStarted, partial, nil)
+		case "toolcall_start", "toolcall_delta":
+			if toolCall := piToolCallFromEvent(delta); toolCall != nil {
+				return piToolCallFromMaps(ToolEventStarted, toolCall, nil)
+			}
 		case "toolcall_end":
+			toolCall, _ := delta["toolCall"].(map[string]any)
 			return piToolCallFromMaps(ToolEventCompleted, toolCall, nil)
 		}
 	}
 	return ToolEvent{}, false
+}
+
+func piToolCallFromEvent(event map[string]any) map[string]any {
+	if toolCall, _ := event["toolCall"].(map[string]any); toolCall != nil {
+		return toolCall
+	}
+	contentIndex := intFromNumber(event["contentIndex"])
+	partial, _ := event["partial"].(map[string]any)
+	if partial == nil {
+		return nil
+	}
+	content, _ := partial["content"].([]any)
+	if contentIndex < 0 || contentIndex >= len(content) {
+		return nil
+	}
+	toolCall, _ := content[contentIndex].(map[string]any)
+	if firstString(toolCall, "type") != "toolCall" {
+		return nil
+	}
+	return toolCall
 }
 
 func piToolCallFromMaps(status ToolEventStatus, toolCall map[string]any, output any) (ToolEvent, bool) {
@@ -346,7 +436,7 @@ func piToolCallFromMaps(status ToolEventStatus, toolCall map[string]any, output 
 	if name == "" {
 		return ToolEvent{}, false
 	}
-	return ToolEvent{ID: firstString(toolCall, "id", "toolCallId", "tool_call_id"), Name: name, Input: firstPresent(toolCall, "arguments", "args", "input"), Output: output, Status: status}, true
+	return ToolEvent{ID: firstString(toolCall, "id", "toolCallId", "tool_call_id"), Name: name, Input: firstPresent(toolCall, "arguments", "args", "input", "partialJson"), Output: output, Status: status}, true
 }
 
 func parseCodexToolEvent(obj map[string]any) (ToolEvent, bool) {
@@ -413,6 +503,8 @@ func parseJSONLOutput(data []byte) parsedJSONLOutput {
 	var parts, results []string
 	var lastAgentMessage string
 	var sessionID string
+	var sawJSON bool
+	var lastError string
 	s := bufio.NewScanner(bytes.NewReader(data))
 	for s.Scan() {
 		line := bytes.TrimSpace(s.Bytes())
@@ -423,17 +515,29 @@ func parseJSONLOutput(data []byte) parsedJSONLOutput {
 		if err := json.Unmarshal(line, &obj); err != nil {
 			continue
 		}
+		sawJSON = true
+		typeName := firstString(obj, "type")
 		if sessionID == "" {
-			sessionID = firstString(obj, "session_id", "thread_id", "sessionId", "sessionFile")
+			if typeName == "session" {
+				sessionID = firstString(obj, "sessionFile", "session_file", "sessionId", "session_id", "id")
+			} else {
+				sessionID = firstString(obj, "session_id", "thread_id", "sessionId", "sessionFile")
+			}
 		}
-		if typeName := firstString(obj, "type"); typeName == "agent_end" {
+		if typeName == "agent_end" {
 			if text := lastAssistantTextFromMessages(obj["messages"]); text != "" {
 				parts = append(parts, text)
+			}
+			if errText := lastAssistantErrorFromMessages(obj["messages"]); errText != "" {
+				lastError = errText
 			}
 			continue
 		} else if typeName == "message_end" {
 			if text := assistantTextFromMessage(obj["message"]); text != "" {
 				lastAgentMessage = text
+			}
+			if errText := assistantErrorFromMessage(obj["message"]); errText != "" {
+				lastError = errText
 			}
 			continue
 		}
@@ -448,20 +552,12 @@ func parseJSONLOutput(data []byte) parsedJSONLOutput {
 			}
 		}
 		if message, ok := obj["message"].(map[string]any); ok {
-			if content, ok := message["content"].([]any); ok {
-				before := len(parts)
-				for _, part := range content {
-					partObj, ok := part.(map[string]any)
-					if !ok || partObj["type"] != "text" {
-						continue
-					}
-					if value, ok := partObj["text"].(string); ok && strings.TrimSpace(value) != "" {
-						parts = append(parts, strings.TrimSpace(value))
-					}
-				}
-				if len(parts) > before {
-					continue
-				}
+			if text := assistantTextFromOutputMessage(typeName, message); text != "" {
+				parts = append(parts, text)
+				continue
+			}
+			if errText := assistantErrorFromOutputMessage(typeName, message); errText != "" {
+				lastError = errText
 			}
 		}
 		for _, key := range []string{"text", "content", "message", "output"} {
@@ -478,7 +574,10 @@ func parseJSONLOutput(data []byte) parsedJSONLOutput {
 	if len(results) > 0 {
 		text = strings.Join(results, "\n")
 	}
-	return parsedJSONLOutput{Text: text, SessionID: sessionID}
+	if text != "" {
+		lastError = ""
+	}
+	return parsedJSONLOutput{Text: text, SessionID: sessionID, SawJSON: sawJSON, Error: lastError}
 }
 
 func lastAssistantTextFromMessages(value any) string {
@@ -494,10 +593,61 @@ func lastAssistantTextFromMessages(value any) string {
 	return ""
 }
 
+func lastAssistantErrorFromMessages(value any) string {
+	messages, ok := value.([]any)
+	if !ok {
+		return ""
+	}
+	for i := len(messages) - 1; i >= 0; i-- {
+		if text := assistantErrorFromMessage(messages[i]); text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
 func assistantTextFromMessage(value any) string {
 	message, ok := value.(map[string]any)
 	if !ok || firstString(message, "role") != "assistant" {
 		return ""
+	}
+	return textFromMessageContent(message)
+}
+
+func assistantTextFromOutputMessage(eventType string, message map[string]any) string {
+	role := firstString(message, "role")
+	if role != "assistant" && !(role == "" && eventType == "assistant") {
+		return ""
+	}
+	return textFromMessageContent(message)
+}
+
+func assistantErrorFromMessage(value any) string {
+	message, ok := value.(map[string]any)
+	if !ok || firstString(message, "role") != "assistant" {
+		return ""
+	}
+	return errorFromMessage(message)
+}
+
+func assistantErrorFromOutputMessage(eventType string, message map[string]any) string {
+	role := firstString(message, "role")
+	if role != "assistant" && !(role == "" && eventType == "assistant") {
+		return ""
+	}
+	return errorFromMessage(message)
+}
+
+func errorFromMessage(message map[string]any) string {
+	if text := firstString(message, "errorMessage", "error_message", "error"); text != "" {
+		return text
+	}
+	return ""
+}
+
+func textFromMessageContent(message map[string]any) string {
+	if text := firstString(message, "content"); text != "" {
+		return text
 	}
 	content, ok := message["content"].([]any)
 	if !ok {
@@ -514,6 +664,21 @@ func assistantTextFromMessage(value any) string {
 		}
 	}
 	return strings.TrimSpace(strings.Join(parts, "\n"))
+}
+
+func intFromNumber(value any) int {
+	switch v := value.(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	case json.Number:
+		n, err := v.Int64()
+		if err == nil {
+			return int(n)
+		}
+	}
+	return -1
 }
 
 func firstString(obj map[string]any, keys ...string) string {

@@ -156,6 +156,70 @@ func TestSendAllowsAttachmentOnlyMessage(t *testing.T) {
 	}
 }
 
+func TestReactUsesEnvDefaults(t *testing.T) {
+	var gotAuth, gotPath string
+	var got map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotPath = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+	getenv := func(key string) string {
+		switch key {
+		case "THREADS_BASE_URL":
+			return srv.URL
+		case "THREADS_API_TOKEN":
+			return "tok"
+		case "THREADS_MESSAGE_ID":
+			return "msg1"
+		default:
+			return ""
+		}
+	}
+	var stdout, stderr bytes.Buffer
+	if err := run(context.Background(), []string{"react", "--emoji", "✅"}, getenv, bytes.NewBuffer(nil), &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if gotAuth != "Bearer tok" || gotPath != "/messages/msg1/reactions" || got["emoji"] != "✅" {
+		t.Fatalf("bad reaction request auth=%q path=%q body=%v", gotAuth, gotPath, got)
+	}
+	if stdout.String() != "reacted\n" {
+		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
+func TestReactCanTargetAnyMessageID(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+	getenv := func(key string) string {
+		switch key {
+		case "THREADS_BASE_URL":
+			return srv.URL
+		case "THREADS_API_TOKEN":
+			return "tok"
+		case "THREADS_MESSAGE_ID":
+			return "trigger-msg"
+		default:
+			return ""
+		}
+	}
+	var stdout, stderr bytes.Buffer
+	if err := run(context.Background(), []string{"react", "--message-id", "other-msg", "--emoji", "🚀"}, getenv, bytes.NewBuffer(nil), &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/messages/other-msg/reactions" {
+		t.Fatalf("got path %q", gotPath)
+	}
+}
+
 func TestSendRequiresContent(t *testing.T) {
 	getenv := func(key string) string {
 		switch key {

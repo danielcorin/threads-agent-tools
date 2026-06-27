@@ -15,7 +15,8 @@
           "exec",
           "--json"
         ],
-        "working_dir": "/Users/dancorin/dev"
+        "working_dir": "/Users/dancorin/dev",
+        "structured": true
       },
       "safety": {
         "mode": "read-only",
@@ -48,7 +49,8 @@
           "--output-format",
           "stream-json"
         ],
-        "working_dir": "/Users/dancorin/dev"
+        "working_dir": "/Users/dancorin/dev",
+        "structured": true
       },
       "safety": {
         "mode": "read-only",
@@ -81,7 +83,8 @@
           "json",
           "--print"
         ],
-        "working_dir": "/Users/dancorin/dev"
+        "working_dir": "/Users/dancorin/dev",
+        "structured": true
       },
       "safety": {
         "mode": "read-only",

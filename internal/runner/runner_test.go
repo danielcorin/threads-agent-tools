@@ -11,6 +11,13 @@ import (
 	"github.com/danielcorin/threads-agent-bridge/internal/threads"
 )
 
+func TestParseStructuredOutput(t *testing.T) {
+	out := parseStructuredOutput(Output{Text: `{"content":"Done","reactions":[{"message_id":"m1","emoji":"✅"},{"message_id":"","emoji":"❌"}]}`})
+	if out.Text != "Done" || len(out.Reactions) != 1 || out.Reactions[0].MessageID != "m1" || out.Reactions[0].Emoji != "✅" {
+		t.Fatalf("bad structured output: %+v", out)
+	}
+}
+
 func TestParseJSONLText(t *testing.T) {
 	got := parseJSONLText([]byte("{\"type\":\"x\",\"text\":\"hello\"}\nnot-json\n{\"content\":\"world\"}\n"))
 	if got != "hello\nworld" {
@@ -80,6 +87,27 @@ func TestParseJSONLOutputCapturesSessionIDs(t *testing.T) {
 	}
 }
 
+func TestParseJSONLOutputIgnoresPiUserMessages(t *testing.T) {
+	got := parseJSONLText([]byte("{\"type\":\"message_start\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"bridge instructions should not be posted\"}]}}\n{\"type\":\"agent_end\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"bridge instructions should not be posted\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"real answer\"}]}]}\n"))
+	if got != "real answer" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestParseJSONLOutputDoesNotFallbackToRawPiEvents(t *testing.T) {
+	parsed := parseJSONLOutput([]byte("{\"type\":\"session\",\"id\":\"pi-session\",\"cwd\":\"/tmp\"}\n{\"type\":\"agent_start\"}\n{\"type\":\"turn_start\"}\n{\"type\":\"message_start\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Hey react with an emoji only please\"}]}}\n{\"type\":\"message_end\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Hey react with an emoji only please\"}]}}\n"))
+	if !parsed.SawJSON || parsed.Text != "" || parsed.SessionID != "pi-session" {
+		t.Fatalf("bad parsed output: %+v", parsed)
+	}
+}
+
+func TestParsePiSessionHeaderAndStringContent(t *testing.T) {
+	parsed := parseJSONLOutput([]byte("{\"type\":\"session\",\"id\":\"pi-session\",\"cwd\":\"/tmp\"}\n{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"content\":\"string answer\"}}\n"))
+	if parsed.Text != "string answer" || parsed.SessionID != "pi-session" {
+		t.Fatalf("bad pi parse: %+v", parsed)
+	}
+}
+
 func TestParseToolEventsFromPiJSON(t *testing.T) {
 	started, ok := parseToolEvent([]byte(`{"type":"tool_execution_start","toolCallId":"call_1","toolName":"bash","args":{"command":"pwd"}}`))
 	if !ok || started.ID != "call_1" || started.Name != "bash" || started.Status != ToolEventStarted {
@@ -88,6 +116,17 @@ func TestParseToolEventsFromPiJSON(t *testing.T) {
 	completed, ok := parseToolEvent([]byte(`{"type":"tool_execution_end","toolCallId":"call_1","toolName":"bash","result":{"content":[{"type":"text","text":"ok"}]},"isError":false}`))
 	if !ok || completed.ID != "call_1" || completed.Name != "bash" || completed.Status != ToolEventCompleted || completed.Error {
 		t.Fatalf("bad pi end event: ok=%v event=%+v", ok, completed)
+	}
+}
+
+func TestParsePiMessageUpdateToolCallEvents(t *testing.T) {
+	started, ok := parseToolEvent([]byte(`{"type":"message_update","message":{"role":"assistant","content":[{"type":"toolCall","id":"call_2","name":"bash","arguments":{"command":"pwd"}}]},"assistantMessageEvent":{"type":"toolcall_start","contentIndex":0,"partial":{"role":"assistant","content":[{"type":"toolCall","id":"call_2","name":"bash","arguments":{"command":"pwd"}}]}}}`))
+	if !ok || started.ID != "call_2" || started.Name != "bash" || started.Status != ToolEventStarted {
+		t.Fatalf("bad pi message_update start event: ok=%v event=%+v", ok, started)
+	}
+	completed, ok := parseToolEvent([]byte(`{"type":"message_update","assistantMessageEvent":{"type":"toolcall_end","contentIndex":0,"toolCall":{"type":"toolCall","id":"call_2","name":"bash","arguments":{"command":"pwd"}}}}`))
+	if !ok || completed.ID != "call_2" || completed.Name != "bash" || completed.Status != ToolEventCompleted {
+		t.Fatalf("bad pi message_update end event: ok=%v event=%+v", ok, completed)
 	}
 }
 
@@ -134,9 +173,21 @@ func TestBuildResumeArgs(t *testing.T) {
 }
 
 func TestBuildPromptDocumentsThreadsSendAsInterimOnly(t *testing.T) {
-	prompt := buildPrompt(Input{Event: threads.Event{Message: threads.Message{Content: "ship it"}}})
-	if !strings.Contains(prompt, "threads send --content") || !strings.Contains(prompt, "still write your final answer to stdout") || !strings.Contains(prompt, "ship it") {
+	prompt := buildPrompt(config.Scope{}, Input{Event: threads.Event{Message: threads.Message{Content: "ship it"}}})
+	if !strings.Contains(prompt, "threads send --content") || !strings.Contains(prompt, "threads react") || !strings.Contains(prompt, "still write your final answer to stdout") || !strings.Contains(prompt, "ship it") {
 		t.Fatalf("prompt missing CLI contract: %q", prompt)
+	}
+}
+
+func TestPiPromptSeparatesBridgeInstructionsFromUserPrompt(t *testing.T) {
+	input := Input{Event: threads.Event{Message: threads.Message{Content: "Please react to this message"}}}
+	instructions := buildBridgeInstructions(config.Scope{}, input)
+	userPrompt := buildUserPrompt(input)
+	if !strings.Contains(instructions, "Threads agent bridge session") || strings.Contains(instructions, "Please react to this message") {
+		t.Fatalf("bad bridge instructions: %q", instructions)
+	}
+	if strings.Contains(userPrompt, "Threads agent bridge session") || !strings.Contains(userPrompt, "Please react to this message") {
+		t.Fatalf("bad user prompt: %q", userPrompt)
 	}
 }
 

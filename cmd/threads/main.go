@@ -40,9 +40,49 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdin i
 	switch args[0] {
 	case "send":
 		return runSend(ctx, args[1:], getenv, stdin, stdout)
+	case "react":
+		return runReact(ctx, args[1:], getenv, stdout)
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
+}
+
+func runReact(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("react", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	baseURL := fs.String("base-url", getenvDefault(getenv, "THREADS_BASE_URL", ""), "Threads API base URL")
+	token := fs.String("token", getenvDefault(getenv, "THREADS_API_TOKEN", ""), "Threads API token")
+	tokenEnv := fs.String("token-env", "", "environment variable containing the Threads API token")
+	messageID := fs.String("message", getenvDefault(getenv, "THREADS_MESSAGE_ID", ""), "target Threads message id")
+	fs.StringVar(messageID, "message-id", *messageID, "target Threads message id; alias for --message")
+	emoji := fs.String("emoji", "", "emoji reaction to add")
+	timeout := fs.Duration("timeout", 30*time.Second, "request timeout")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *baseURL == "" {
+		return errors.New("--base-url or THREADS_BASE_URL is required")
+	}
+	if *tokenEnv != "" {
+		*token = getenv(*tokenEnv)
+	}
+	if *token == "" {
+		return errors.New("--token, --token-env, or THREADS_API_TOKEN is required")
+	}
+	if *messageID == "" {
+		return errors.New("--message, --message-id, or THREADS_MESSAGE_ID is required")
+	}
+	if strings.TrimSpace(*emoji) == "" {
+		return errors.New("--emoji is required")
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, *timeout)
+	defer cancel()
+	client := threads.Client{BaseURL: *baseURL, Token: *token}
+	if err := client.AddReaction(reqCtx, *messageID, strings.TrimSpace(*emoji)); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintln(stdout, "reacted")
+	return nil
 }
 
 func runSend(ctx context.Context, args []string, getenv func(string) string, stdin io.Reader, stdout io.Writer) error {
@@ -141,14 +181,19 @@ func printUsage(w io.Writer) {
 
 Usage:
   threads send [flags]
+  threads react [flags]
 
 send posts an immediate side-effect message to Threads. It is for interim
 progress/status/artifact messages while an agent loop continues. The agent's
 final answer should still be written to stdout for threads-agent-bridge to post
 as the final response.
 
+react adds an emoji reaction to any Threads message by id, defaulting to the
+trigger message for the current agent run.
+
 Environment defaults:
-  THREADS_BASE_URL, THREADS_API_TOKEN, THREADS_CHANNEL_ID, THREADS_THREAD_ID
+  THREADS_BASE_URL, THREADS_API_TOKEN, THREADS_CHANNEL_ID, THREADS_THREAD_ID,
+  THREADS_MESSAGE_ID
 
 Examples:
   threads send --content "Working on it..."
@@ -156,5 +201,8 @@ Examples:
   threads send --channel ch_123 --thread msg_123 --content "Still running"
   threads send --content "Log attached" --file ./test.log
   threads send --content "Screenshot" --image ./screenshot.png
-  threads send --attachment-ids att_123,att_456`)
+  threads send --attachment-ids att_123,att_456
+  threads react --emoji "✅"
+  threads react --message msg_123 --emoji "👀"
+  threads react --message-id msg_456 --emoji "🚀"`)
 }

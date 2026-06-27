@@ -7,7 +7,7 @@ Local single-binary daemon that connects Threads owner-scoped events to local ag
 - One `GET /events?since=<cursor>` WebSocket per Threads token owner.
 - Cursor is optional: first run can start live; reconnects resume from the persisted cursor.
 - Multi-scope config maps Threads bot tokens to local runners, with optional channel/thread allowlists.
-- Local response policy is intentionally minimal: Threads decides when the bot should be invoked; each scope must explicitly opt in with `match` entries, using `"*"` for all delivered channels/threads.
+- Local response policy is intentionally minimal: Threads decides when the bot should be invoked; each scope must explicitly opt in with `match` entries, using `"*"` for all delivered channels/threads. Any reaction emoji on a message authored by a routed bot routes that message back to that same bot.
 - SQLite persists cursors, processed-event dedupe, and Threads-thread-to-runner-session mappings.
 - Each top-level Threads message starts a new local runner conversation; replies in that Threads thread resume/append to the stored Codex/Claude Code/Pi session for that root message.
 - Codex runs through `codex exec --json` by default, captures `thread_id`, and resumes replies with `codex exec ... resume --json <thread_id> -`.
@@ -67,9 +67,14 @@ threads send --channel ch_123 --thread msg_123 --content "Still running"
 threads send --content "Log attached" --file ./test.log
 threads send --content "Screenshot" --image ./screenshot.png
 threads send --attachment-ids att_123,att_456
+threads react --emoji "✅"
+threads react --message msg_123 --emoji "👀"
+threads react --message-id msg_456 --emoji "🚀"
 ```
 
 `threads send` reads defaults from `THREADS_BASE_URL`, `THREADS_API_TOKEN`, `THREADS_CHANNEL_ID`, and `THREADS_THREAD_ID`, which the bridge injects into runner subprocesses. For top-level messages, `THREADS_THREAD_ID` is normalized to the root message id so interim and final responses land in the same Threads thread. The command defaults to `message_type: "agent_update"` and metadata `{source:"threads-cli", kind:"interim"}`. `--file` and `--image` may be repeated; each path is uploaded to `POST /uploads`, then the returned attachment IDs are included when posting the message. `--attachment-ids` can reuse already-uploaded IDs, and attachment-only messages are allowed. The agent should still write its final answer to stdout; the daemon posts stdout as the final `response` message.
+
+`threads react` reads `THREADS_BASE_URL`, `THREADS_API_TOKEN`, and `THREADS_MESSAGE_ID`; by default it reacts to the message that triggered the current run. Agents can react to any visible Threads message by passing `--message <id>` or `--message-id <id>`.
 
 Tool-call streaming and process lifecycle are bridge-owned. Agents do not need to know the Threads UI schema: Codex `command_execution` JSONL items, Claude Code `tool_use`/`tool_result` stream-json events, and Pi `tool_execution_*` JSON events are translated into hidden/intermediate Threads step messages by the daemon. The daemon also records `process.activity` counts for tool calls and replies so the Threads process list reflects local CLI work.
 
@@ -157,8 +162,8 @@ Each scope has:
 
 - `id`: stable local scope id.
 - `threads`: API base URL, token env var or token, and optional `since` override.
-- `match`: local channel/thread allowlists. Empty or omitted `channel_ids` and `thread_ids` match no events. Use `"*"` in an array to accept all delivered values for that dimension; otherwise list only the channel ids and/or root thread ids that should be passed to that scope. For example, `channel_ids: ["c1"]` plus `thread_ids: ["*"]` means every delivered thread in channel `c1`.
-- `runner`: local tool command/args. v0 defaults to Codex-style stdin prompt and JSONL/stdout parsing; set `type: "claude-code"` for Claude Code stream-json parsing or `type: "pi"` for Pi JSON print mode.
+- `match`: local channel/thread allowlists. Empty or omitted `channel_ids` and `thread_ids` match no events. Use `"*"` in an array to accept all delivered values for that dimension; otherwise list only the channel ids and/or root thread ids that should be passed to that scope. For example, `channel_ids: ["c1"]` plus `thread_ids: ["*"]` means every delivered thread in channel `c1`. Reaction events use the same channel/thread allowlists, but do not have per-emoji routing: any emoji on a message whose `senderId` matches the scope's `threads.user_id` invokes that same scope.
+- `runner`: local tool command/args. v0 defaults to Codex-style stdin prompt and JSONL/stdout parsing; set `type: "claude-code"` for Claude Code stream-json parsing or `type: "pi"` for Pi JSON print mode. Set `structured: true` to let the final stdout be a JSON object such as `{ "content": "Done", "reactions": [{ "message_id": "msg_123", "emoji": "✅" }] }`; the bridge posts `content` and applies the requested reactions. Plain-text final output still works in structured mode.
 - `safety`: user-owned mode values translated by the runner argv builder. Codex supports `read-only`, `workspace-write`, `danger-full-access`, `auto`, or `yolo`; `auto` maps to workspace-write, no approval prompts, and workspace-write network access. Claude Code maps `read-only` to plan mode, `workspace-write` to acceptEdits, `auto` to `--permission-mode auto`, and `yolo` to skipped permissions. Pi maps `read-only` to `--tools read,grep,find,ls` unless `allowed_tools` is set; `allowed_tools` maps to Pi `--tools` and Claude Code `--allowedTools` for their respective scopes.
 
 ## Event contract assumed
@@ -175,5 +180,7 @@ The bridge accepts flexible JSON envelopes while the Threads `/events` schema se
   "message": { "id": "msg_456", "content": "...", "senderId": "usr_..." }
 }
 ```
+
+Reaction invocation accepts delivered reaction events with `type: "reaction_added"`, `"reaction.created"`, or `"reaction"`, plus `emoji`, `channelId`, and `messageId`/`message.id` for the reacted-to message. The reacted-to message must include `senderId`, and the scope must match both `threads.user_id` and the configured `channel_ids`/`thread_ids`.
 
 Unknown event types are ignored. Missing event ids fall back to cursor for dedupe.
