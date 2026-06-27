@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/danielcorin/threads-agent-bridge/internal/config"
@@ -88,7 +89,7 @@ type toolEventRunner struct{}
 func (toolEventRunner) Run(ctx context.Context, scope config.Scope, in runner.Input) (runner.Output, error) {
 	if in.OnToolEvent != nil {
 		_ = in.OnToolEvent(ctx, runner.ToolEvent{ID: "tool-1", Name: "Bash", Input: map[string]any{"command": "git status"}, Status: runner.ToolEventStarted})
-		_ = in.OnToolEvent(ctx, runner.ToolEvent{ID: "tool-1", Name: "Bash", Status: runner.ToolEventCompleted})
+		_ = in.OnToolEvent(ctx, runner.ToolEvent{ID: "tool-1", Name: "Bash", Output: "clean", Status: runner.ToolEventCompleted})
 	}
 	return runner.Output{Text: "done", RunnerSessionID: "runner-s1"}, nil
 }
@@ -112,8 +113,14 @@ func TestHandleEventStreamsToolEventsAsTriggeredStepMessages(t *testing.T) {
 	if s.sent[0].MessageType != "progress" || s.sent[0].Metadata["trigger_id"] != "m1" || s.sent[0].Metadata["tool"] != "Bash" {
 		t.Fatalf("bad tool start message: %+v", s.sent[0])
 	}
-	if s.sent[1].MessageType != "tool_output" || s.sent[1].Metadata["status"] != string(runner.ToolEventCompleted) {
+	if !strings.HasPrefix(s.sent[0].Content, "↳ Bash: `git status`") || !strings.Contains(s.sent[0].Content, "Input:\n\n    {") || strings.Contains(s.sent[0].Content, "…") {
+		t.Fatalf("tool input should title with command and include full expandable JSON, got %q", s.sent[0].Content)
+	}
+	if s.sent[1].MessageType != "tool_output" || s.sent[1].Metadata["status"] != string(runner.ToolEventCompleted) || s.sent[1].Metadata["tool"] != "Bash" {
 		t.Fatalf("bad tool completed message: %+v", s.sent[1])
+	}
+	if !strings.HasPrefix(s.sent[1].Content, "✓ Bash: `git status`") || strings.Contains(s.sent[1].Content, "Input:") || !strings.Contains(s.sent[1].Content, "Output:\n\n    clean") {
+		t.Fatalf("tool completion should retain command title and show output only, got %q", s.sent[1].Content)
 	}
 	if s.sent[2].MessageType != "response" || s.sent[2].Content != "done" {
 		t.Fatalf("bad final message: %+v", s.sent[2])

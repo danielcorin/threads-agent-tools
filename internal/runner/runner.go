@@ -39,6 +39,7 @@ type ToolEvent struct {
 	ID     string
 	Name   string
 	Input  any
+	Output any
 	Status ToolEventStatus
 	Error  bool
 }
@@ -272,7 +273,7 @@ func parseClaudeToolEvent(obj map[string]any) (ToolEvent, bool) {
 			}
 			return ToolEvent{ID: firstString(partObj, "id"), Name: name, Input: partObj["input"], Status: ToolEventStarted}, true
 		case "tool_result":
-			return ToolEvent{ID: firstString(partObj, "tool_use_id"), Status: ToolEventCompleted, Error: truthy(partObj["is_error"])}, true
+			return ToolEvent{ID: firstString(partObj, "tool_use_id"), Output: partObj["content"], Status: ToolEventCompleted, Error: truthy(partObj["is_error"])}, true
 		}
 	}
 	return ToolEvent{}, false
@@ -311,7 +312,11 @@ func parseCodexToolEvent(obj map[string]any) (ToolEvent, bool) {
 	if input == nil {
 		input = firstPresent(obj, "input", "arguments", "args", "parameters")
 	}
-	return ToolEvent{ID: firstString(item, "id", "call_id", "callId"), Name: name, Input: input, Status: status, Error: truthy(item["error"]) || truthy(obj["error"])}, true
+	output := firstPresent(item, "output", "result", "content", "stdout", "stderr")
+	if output == nil {
+		output = firstPresent(obj, "output", "result", "content", "stdout", "stderr")
+	}
+	return ToolEvent{ID: firstString(item, "id", "call_id", "callId"), Name: name, Input: input, Output: output, Status: status, Error: truthy(item["error"]) || truthy(obj["error"])}, true
 }
 
 func firstPresent(obj map[string]any, keys ...string) any {
@@ -336,6 +341,7 @@ func truthy(value any) bool {
 
 func parseJSONLOutput(data []byte) parsedJSONLOutput {
 	var parts, results []string
+	var lastAgentMessage string
 	var sessionID string
 	s := bufio.NewScanner(bytes.NewReader(data))
 	for s.Scan() {
@@ -356,7 +362,7 @@ func parseJSONLOutput(data []byte) parsedJSONLOutput {
 		}
 		if item, ok := obj["item"].(map[string]any); ok && item["type"] == "agent_message" {
 			if value, ok := item["text"].(string); ok && strings.TrimSpace(value) != "" {
-				parts = append(parts, strings.TrimSpace(value))
+				lastAgentMessage = strings.TrimSpace(value)
 				continue
 			}
 		}
@@ -385,6 +391,9 @@ func parseJSONLOutput(data []byte) parsedJSONLOutput {
 		}
 	}
 	text := strings.Join(parts, "\n")
+	if lastAgentMessage != "" {
+		text = lastAgentMessage
+	}
 	if len(results) > 0 {
 		text = strings.Join(results, "\n")
 	}

@@ -31,6 +31,28 @@ go build -o bin/threads-agent-bridge ./cmd/threads-agent-bridge
 go build -o bin/threads ./cmd/threads
 ```
 
+## Running as a macOS LaunchAgent
+
+The local bridge is intended to run continuously as a user LaunchAgent in development. The current local service uses:
+
+- Label: `com.danielcorin.threads-agent-bridge`
+- Plist: `~/Library/LaunchAgents/com.danielcorin.threads-agent-bridge.plist`
+- Working directory: `~/dev/threads-agent-bridge`
+- Command: `bin/threads-agent-bridge -config config.local.json`
+- Env files sourced before launch: `.secrets/codex.env` and `.secrets/claude-code.env`
+- Logs: `logs/bridge.log` and `logs/bridge.err.log` (`logs/` is gitignored)
+
+Useful commands:
+
+```bash
+launchctl print gui/$UID/com.danielcorin.threads-agent-bridge
+launchctl kickstart -k gui/$UID/com.danielcorin.threads-agent-bridge
+launchctl bootout gui/$UID ~/Library/LaunchAgents/com.danielcorin.threads-agent-bridge.plist
+launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.danielcorin.threads-agent-bridge.plist
+```
+
+If the bridge appears unresponsive, first check that the LaunchAgent exists and that a `threads-agent-bridge` process is running, then inspect `logs/bridge.err.log`.
+
 ## Agent-facing Threads CLI
 
 `threads` is intentionally narrow. It exists so local tools/agents can publish progress or artifacts before their loop is finished without taking over final-response handling.

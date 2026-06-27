@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/danielcorin/threads-agent-bridge/internal/config"
@@ -128,7 +129,20 @@ func (d Daemon) HandleEvent(ctx context.Context, scope config.Scope, sender Send
 }
 
 func (d Daemon) toolEventHandler(scope config.Scope, sender Sender, event threads.Event, threadID string) runner.ToolEventHandler {
+	active := map[string]runner.ToolEvent{}
 	return func(ctx context.Context, toolEvent runner.ToolEvent) error {
+		if toolEvent.ID != "" {
+			if toolEvent.Status == runner.ToolEventStarted {
+				active[toolEvent.ID] = toolEvent
+			} else if previous, ok := active[toolEvent.ID]; ok {
+				if toolEvent.Name == "" {
+					toolEvent.Name = previous.Name
+				}
+				if toolEvent.Input == nil {
+					toolEvent.Input = previous.Input
+				}
+			}
+		}
 		content := formatToolEvent(toolEvent)
 		messageType := "progress"
 		if toolEvent.Status == runner.ToolEventCompleted {
@@ -148,6 +162,7 @@ func (d Daemon) toolEventHandler(scope config.Scope, sender Sender, event thread
 				"status":     string(toolEvent.Status),
 				"error":      toolEvent.Error,
 				"input":      toolEvent.Input,
+				"output":     toolEvent.Output,
 			},
 		})
 		if err != nil && d.Logger != nil {
@@ -166,32 +181,73 @@ func formatToolEvent(event runner.ToolEvent) string {
 			prefix = "✓"
 		}
 	}
-	return prefix + " " + event.Name + formatToolInput(event.Input)
+	title := strings.TrimSpace(prefix + " " + event.Name)
+	if command := toolCommand(event.Input); command != "" {
+		title += ": `" + inlineCode(command) + "`"
+	}
+	if event.Status == runner.ToolEventCompleted {
+		return title + formatToolOutput(event.Output)
+	}
+	return title + formatToolInput(event.Input)
+}
+
+func toolCommand(input any) string {
+	switch v := input.(type) {
+	case map[string]any:
+		if command, ok := v["command"].(string); ok {
+			return firstLine(command)
+		}
+	case string:
+		return firstLine(v)
+	}
+	return ""
+}
+
+func firstLine(value string) string {
+	for _, line := range strings.Split(value, "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func inlineCode(value string) string {
+	return strings.ReplaceAll(value, "`", "\\`")
 }
 
 func formatToolInput(input any) string {
-	if input == nil {
-		return ""
-	}
-	return " " + truncateJSON(input, 240)
+	return formatToolPayload("Input", input)
 }
 
-func truncateJSON(value any, limit int) string {
-	if limit <= 0 {
+func formatToolOutput(output any) string {
+	return formatToolPayload("Output", output)
+}
+
+func formatToolPayload(label string, payload any) string {
+	if payload == nil {
 		return ""
 	}
-	data, err := json.Marshal(value)
+	if text, ok := payload.(string); ok {
+		text = strings.TrimSpace(text)
+		if text == "" {
+			return ""
+		}
+		return "\n\n" + label + ":\n\n" + indentCode(text)
+	}
+	data, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return ""
 	}
-	text := string(data)
-	if len(text) <= limit {
-		return text
+	return "\n\n" + label + ":\n\n" + indentCode(string(data))
+}
+
+func indentCode(value string) string {
+	lines := strings.Split(value, "\n")
+	for i, line := range lines {
+		lines[i] = "    " + line
 	}
-	if limit <= 1 {
-		return "…"
-	}
-	return text[:limit-1] + "…"
+	return strings.Join(lines, "\n")
 }
 
 func rootThreadID(event threads.Event) string {

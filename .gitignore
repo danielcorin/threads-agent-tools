@@ -1,6 +1,7 @@
 /threads-agent-bridge
 /bin/
 /dist/
+/logs/
 *.db
 *.db-*
 .env

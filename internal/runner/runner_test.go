@@ -12,8 +12,8 @@ import (
 )
 
 func TestParseJSONLText(t *testing.T) {
-	got := parseJSONLText([]byte("{\"type\":\"x\",\"text\":\"hello\"}\nnot-json\n{\"content\":\"world\"}\n{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"done\"}}\n"))
-	if got != "hello\nworld\ndone" {
+	got := parseJSONLText([]byte("{\"type\":\"x\",\"text\":\"hello\"}\nnot-json\n{\"content\":\"world\"}\n"))
+	if got != "hello\nworld" {
 		t.Fatalf("got %q", got)
 	}
 }
@@ -31,7 +31,7 @@ func TestParseToolEventsFromClaudeStreamJSON(t *testing.T) {
 		t.Fatalf("bad claude tool event: ok=%v event=%+v", ok, event)
 	}
 	completed, ok := parseToolEvent([]byte(`{"type":"user","message":{"content":[{"tool_use_id":"toolu_1","type":"tool_result","content":"ok","is_error":false}]}}`))
-	if !ok || completed.ID != "toolu_1" || completed.Status != ToolEventCompleted || completed.Error {
+	if !ok || completed.ID != "toolu_1" || completed.Status != ToolEventCompleted || completed.Output != "ok" || completed.Error {
 		t.Fatalf("bad claude tool result event: ok=%v event=%+v", ok, completed)
 	}
 }
@@ -49,7 +49,7 @@ func TestScanRunnerOutputFillsClaudeToolResultName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0].Name != "Bash" || got[1].Name != "Bash" || got[1].Status != ToolEventCompleted {
+	if len(got) != 2 || got[0].Name != "Bash" || got[1].Name != "Bash" || got[1].Status != ToolEventCompleted || got[1].Output != "ok" {
 		t.Fatalf("bad events: %+v", got)
 	}
 }
@@ -73,6 +73,13 @@ func TestParseJSONLOutputCapturesSessionIDs(t *testing.T) {
 	claude := parseJSONLOutput([]byte("{\"type\":\"system\",\"session_id\":\"claude-session\"}\n{\"type\":\"result\",\"result\":\"final\",\"session_id\":\"claude-session\"}\n"))
 	if claude.Text != "final" || claude.SessionID != "claude-session" {
 		t.Fatalf("bad claude parse: %+v", claude)
+	}
+}
+
+func TestParseCodexFallbackUsesLastAgentMessage(t *testing.T) {
+	got := parseJSONLText([]byte("{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"first progress chunk\"}}\n{\"type\":\"item.completed\",\"item\":{\"type\":\"command_execution\",\"command\":\"threads send --content update\"}}\n{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"final summary\"}}\n"))
+	if got != "final summary" {
+		t.Fatalf("got %q", got)
 	}
 }
 
