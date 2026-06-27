@@ -72,6 +72,78 @@ threads send --attachment-ids att_123,att_456
 
 Tool-call streaming and process lifecycle are bridge-owned. Agents do not need to know the Threads UI schema: Codex `command_execution` JSONL items and Claude Code `tool_use`/`tool_result` stream-json events are translated into hidden/intermediate Threads step messages by the daemon. The daemon also records `process.activity` counts for tool calls and replies so the Threads process list reflects local CLI work.
 
+## Bot token and config setup
+
+The bridge should run each routed bot with that bot user's Threads API token. Keep tokens out of git: `config.local.json`, `.secrets/*.env`, `threads-agent-bridge.db`, and `logs/` are local-only files.
+
+1. Load the Threads admin credentials from the local Threads checkout:
+
+   ```bash
+   export THREADS_TOKEN=$(grep THREADS_API_TOKEN ~/dev/tela/.env | cut -d= -f2)
+   set -a && source ~/dev/filae/local.env && set +a
+   ```
+
+   `THREADS_TOKEN` authenticates the admin CLI user; `THREADS_ADMIN_KEY` from `local.env` authorizes `admin *` commands.
+
+2. Find or create the bot user. If the bot user already exists, use its id. To create one:
+
+   ```bash
+   BOT_USER_ID=$(bun /Users/dancorin/dev/threads/cli.ts admin create-user \
+     --username codex \
+     --display-name "Codex" \
+     --password "$(openssl rand -base64 32)" \
+     | jq -r .id)
+
+   bun /Users/dancorin/dev/threads/cli.ts admin sql \
+     --sql "UPDATE users SET role = 'bot' WHERE id = '$BOT_USER_ID'"
+   ```
+
+3. Mint a token for that bot user:
+
+   ```bash
+   BOT_TOKEN=$(bun /Users/dancorin/dev/threads/cli.ts admin create-api-token \
+     --user-id "$BOT_USER_ID" \
+     --name "threads-agent-bridge-codex-$(date +%Y-%m-%d)" \
+     | jq -r .token)
+   ```
+
+4. Store the token in a local env file that the LaunchAgent sources:
+
+   ```bash
+   mkdir -p .secrets
+   printf 'THREADS_CODEX_TOKEN=%s\n' "$BOT_TOKEN" >> .secrets/codex.env
+   ```
+
+   Use one env var per routed bot, for example `THREADS_CODEX_TOKEN` and `THREADS_CLAUDE_CODE_TOKEN`.
+
+5. Copy the example config and wire the env var and bot user id into the matching scope:
+
+   ```bash
+   cp config.example.json config.local.json
+   $EDITOR config.local.json
+   ```
+
+   The relevant fields are:
+
+   ```json
+   {
+     "threads": {
+       "base_url": "https://threads-api.filae.site",
+       "token_env": "THREADS_CODEX_TOKEN",
+       "user_id": "<bot-user-id>"
+     }
+   }
+   ```
+
+   Prefer `token_env` over an inline `token` so the secret stays in `.secrets/*.env`. `user_id` must be the same bot user that owns the token; the bridge uses it for presence and process attribution.
+
+6. Restart the LaunchAgent after changing config or secrets:
+
+   ```bash
+   launchctl kickstart -k gui/$UID/com.danielcorin.threads-agent-bridge
+   tail -f logs/bridge.err.log
+   ```
+
 ## Config
 
 See [`config.example.json`](./config.example.json).
