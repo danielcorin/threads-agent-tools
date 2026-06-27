@@ -79,4 +79,22 @@ func (s *Store) MarkProcessed(ctx context.Context, scopeID, eventID string) (boo
 	return rows == 1, err
 }
 
+func (s *Store) RunnerSessionID(ctx context.Context, scopeID, channelID, threadID string) (string, error) {
+	var sessionID string
+	err := s.db.QueryRowContext(ctx, `SELECT runner_session_id FROM sessions WHERE scope_id = ? AND channel_id = ? AND thread_id = ?`, scopeID, channelID, threadID).Scan(&sessionID)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return sessionID, err
+}
+
+func (s *Store) SaveRunnerSessionID(ctx context.Context, scopeID, channelID, threadID, sessionID string) error {
+	if sessionID == "" {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO sessions(scope_id, channel_id, thread_id, runner_session_id, updated_at)
+VALUES(?, ?, ?, ?, ?) ON CONFLICT(scope_id, channel_id, thread_id) DO UPDATE SET runner_session_id=excluded.runner_session_id, updated_at=excluded.updated_at`, scopeID, channelID, threadID, sessionID, now())
+	return err
+}
+
 func now() string { return time.Now().UTC().Format(time.RFC3339Nano) }

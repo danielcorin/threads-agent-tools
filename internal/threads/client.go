@@ -88,7 +88,7 @@ func (c Client) UploadFile(ctx context.Context, path string) (Attachment, error)
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	header := make(textproto.MIMEHeader)
-	header.Set("Content-Disposition", mime.FormatMediaType("form-data", map[string]string{"name": "file", "filename": filepath.Base(path)}))
+	header.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, escapeQuotes(filepath.Base(path))))
 	header.Set("Content-Type", detectContentType(path, file))
 	part, err := writer.CreatePart(header)
 	if err != nil {
@@ -115,7 +115,8 @@ func (c Client) UploadFile(ctx context.Context, path string) (Attachment, error)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return Attachment{}, fmt.Errorf("threads upload file: status %d", resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return Attachment{}, fmt.Errorf("threads upload file: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var attachment Attachment
 	if err := json.NewDecoder(resp.Body).Decode(&attachment); err != nil {
@@ -150,6 +151,10 @@ func (c Client) SendMessage(ctx context.Context, channelID string, req SendMessa
 		return fmt.Errorf("threads send message: status %d", resp.StatusCode)
 	}
 	return nil
+}
+
+func escapeQuotes(value string) string {
+	return strings.NewReplacer("\\", "\\\\", "\"", "\\\"").Replace(value)
 }
 
 func detectContentType(path string, file *os.File) string {

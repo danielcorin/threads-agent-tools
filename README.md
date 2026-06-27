@@ -8,11 +8,13 @@ Local single-binary daemon that connects Threads owner-scoped events to local ag
 - Cursor is optional: first run can start live; reconnects resume from the persisted cursor.
 - Multi-scope config maps Threads channels/threads to local runners and separate tokens.
 - Local response policy is intentionally minimal: Threads decides when the bot should be invoked; this daemon routes received invocation events.
-- SQLite persists cursors, processed-event dedupe, and scope/session mappings.
-- Codex runs through `codex exec --json` by default, with safety flags supplied by local config.
-- Claude Code runs through `claude -p --verbose --output-format stream-json`; if `claude` is not installed on PATH, use `npx -y @anthropic-ai/claude-code` as the command and keep the Claude flags in `runner.args`.
-- Runner subprocesses receive `THREADS_BASE_URL`, `THREADS_API_TOKEN`, `THREADS_CHANNEL_ID`, `THREADS_THREAD_ID`, `THREADS_MESSAGE_ID`, and `THREADS_SCOPE_ID` so they can call the companion `threads` CLI.
+- SQLite persists cursors, processed-event dedupe, and Threads-thread-to-runner-session mappings.
+- Each top-level Threads message starts a new local runner conversation; replies in that Threads thread resume/append to the stored Codex/Claude Code session for that root message.
+- Codex runs through `codex exec --json` by default, captures `thread_id`, and resumes replies with `codex exec ... resume --json <thread_id> -`.
+- Claude Code runs through `claude -p --verbose --output-format stream-json`, captures `session_id`, and resumes replies with `--resume <session_id>`; if `claude` is not installed on PATH, use `npx -y @anthropic-ai/claude-code` as the command and keep the Claude flags in `runner.args`.
+- Runner subprocesses receive `THREADS_BASE_URL`, `THREADS_API_TOKEN`, `THREADS_CHANNEL_ID`, `THREADS_THREAD_ID`, `THREADS_MESSAGE_ID`, `THREADS_SCOPE_ID`, and `THREADS_RUNNER_SESSION_ID` so they can call the companion `threads` CLI.
 - `threads send` posts immediate side-effect/interim messages and can attach files/images through Threads uploads. Final answers remain stdout from the runner; the bridge posts that stdout once the runner exits.
+- The daemon streams Codex/Claude Code tool-call events from JSONL stdout into Threads step rows (`progress` on start, `tool_output` on completion) with `metadata.trigger_id` set to the user message that triggered the run, so the existing Threads tool-call rail attaches to that message as calls occur.
 
 ## Quick start
 
@@ -42,7 +44,9 @@ threads send --content "Screenshot" --image ./screenshot.png
 threads send --attachment-ids att_123,att_456
 ```
 
-`threads send` reads defaults from `THREADS_BASE_URL`, `THREADS_API_TOKEN`, `THREADS_CHANNEL_ID`, and `THREADS_THREAD_ID`, which the bridge injects into runner subprocesses. The command defaults to `message_type: "agent_update"` and metadata `{source:"threads-cli", kind:"interim"}`. `--file` and `--image` may be repeated; each path is uploaded to `POST /uploads`, then the returned attachment IDs are included when posting the message. `--attachment-ids` can reuse already-uploaded IDs, and attachment-only messages are allowed. The agent should still write its final answer to stdout; the daemon posts stdout as the final `response` message.
+`threads send` reads defaults from `THREADS_BASE_URL`, `THREADS_API_TOKEN`, `THREADS_CHANNEL_ID`, and `THREADS_THREAD_ID`, which the bridge injects into runner subprocesses. For top-level messages, `THREADS_THREAD_ID` is normalized to the root message id so interim and final responses land in the same Threads thread. The command defaults to `message_type: "agent_update"` and metadata `{source:"threads-cli", kind:"interim"}`. `--file` and `--image` may be repeated; each path is uploaded to `POST /uploads`, then the returned attachment IDs are included when posting the message. `--attachment-ids` can reuse already-uploaded IDs, and attachment-only messages are allowed. The agent should still write its final answer to stdout; the daemon posts stdout as the final `response` message.
+
+Tool-call streaming is bridge-owned. Agents do not need to know the Threads UI schema: Codex `command_execution` JSONL items and Claude Code `tool_use`/`tool_result` stream-json events are translated into hidden/intermediate Threads step messages by the daemon.
 
 ## Config
 
@@ -54,7 +58,7 @@ Each scope has:
 - `threads`: API base URL, token env var or token, and optional `since` override.
 - `match`: channel/thread allowlist. Empty allowlists match all visible events for that token.
 - `runner`: local tool command/args. v0 defaults to Codex-style stdin prompt and JSONL/stdout parsing; set `type: "claude-code"` for Claude Code stream-json parsing and safety flag mapping.
-- `safety`: user-owned mode values translated by the runner argv builder. Codex supports `read-only`, `workspace-write`, `danger-full-access`, or `yolo`; Claude Code maps `read-only` to plan mode, `workspace-write` to acceptEdits, and `yolo` to skipped permissions. `allowed_tools` maps to Claude Code `--allowedTools` for Claude scopes.
+- `safety`: user-owned mode values translated by the runner argv builder. Codex supports `read-only`, `workspace-write`, `danger-full-access`, `auto`, or `yolo`; `auto` maps to workspace-write, no approval prompts, and workspace-write network access. Claude Code maps `read-only` to plan mode, `workspace-write` to acceptEdits, `auto` to `--permission-mode auto`, and `yolo` to skipped permissions. `allowed_tools` maps to Claude Code `--allowedTools` for Claude scopes.
 
 ## Event contract assumed
 

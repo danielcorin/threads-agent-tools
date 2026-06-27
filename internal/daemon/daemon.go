@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"time"
 
@@ -106,14 +107,98 @@ func (d Daemon) HandleEvent(ctx context.Context, scope config.Scope, sender Send
 	if err != nil || !fresh {
 		return err
 	}
-	out, err := d.Runner.Run(ctx, scope, runner.Input{ScopeID: scope.ID, Event: event})
+	threadID := rootThreadID(event)
+	runnerSessionID, err := d.Store.RunnerSessionID(ctx, scope.ID, event.ChannelID, threadID)
 	if err != nil {
 		return err
+	}
+	out, err := d.Runner.Run(ctx, scope, runner.Input{ScopeID: scope.ID, Event: event, ThreadID: threadID, RunnerSessionID: runnerSessionID, NewSession: runnerSessionID == "", OnToolEvent: d.toolEventHandler(scope, sender, event, threadID)})
+	if err != nil {
+		return err
+	}
+	if out.RunnerSessionID != "" && out.RunnerSessionID != runnerSessionID {
+		if err := d.Store.SaveRunnerSessionID(ctx, scope.ID, event.ChannelID, threadID, out.RunnerSessionID); err != nil {
+			return err
+		}
 	}
 	if out.Text == "" {
 		return nil
 	}
-	return sender.SendMessage(ctx, event.ChannelID, threads.SendMessageRequest{Content: out.Text, ThreadID: event.ThreadID, MessageType: "response", Metadata: map[string]any{"source": "threads-agent-bridge", "kind": "final", "scope_id": scope.ID}})
+	return sender.SendMessage(ctx, event.ChannelID, threads.SendMessageRequest{Content: out.Text, ThreadID: threadID, MessageType: "response", Metadata: map[string]any{"source": "threads-agent-bridge", "kind": "final", "scope_id": scope.ID, "runner_session_id": out.RunnerSessionID}})
+}
+
+func (d Daemon) toolEventHandler(scope config.Scope, sender Sender, event threads.Event, threadID string) runner.ToolEventHandler {
+	return func(ctx context.Context, toolEvent runner.ToolEvent) error {
+		content := formatToolEvent(toolEvent)
+		messageType := "progress"
+		if toolEvent.Status == runner.ToolEventCompleted {
+			messageType = "tool_output"
+		}
+		err := sender.SendMessage(ctx, event.ChannelID, threads.SendMessageRequest{
+			Content:     content,
+			ThreadID:    threadID,
+			MessageType: messageType,
+			Metadata: map[string]any{
+				"source":     "threads-agent-bridge",
+				"kind":       "tool_call",
+				"scope_id":   scope.ID,
+				"trigger_id": event.Message.ID,
+				"tool":       toolEvent.Name,
+				"tool_id":    toolEvent.ID,
+				"status":     string(toolEvent.Status),
+				"error":      toolEvent.Error,
+				"input":      toolEvent.Input,
+			},
+		})
+		if err != nil && d.Logger != nil {
+			d.Logger.Warn("send tool event", "scope", scope.ID, "tool", toolEvent.Name, "status", toolEvent.Status, "error", err)
+		}
+		return err
+	}
+}
+
+func formatToolEvent(event runner.ToolEvent) string {
+	prefix := "↳"
+	if event.Status == runner.ToolEventCompleted {
+		if event.Error {
+			prefix = "✗"
+		} else {
+			prefix = "✓"
+		}
+	}
+	return prefix + " " + event.Name + formatToolInput(event.Input)
+}
+
+func formatToolInput(input any) string {
+	if input == nil {
+		return ""
+	}
+	return " " + truncateJSON(input, 240)
+}
+
+func truncateJSON(value any, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	text := string(data)
+	if len(text) <= limit {
+		return text
+	}
+	if limit <= 1 {
+		return "…"
+	}
+	return text[:limit-1] + "…"
+}
+
+func rootThreadID(event threads.Event) string {
+	if event.ThreadID != "" {
+		return event.ThreadID
+	}
+	return event.Message.ID
 }
 
 func defaultClients(scope config.Scope, token string) (EventSource, Sender) {
