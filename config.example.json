@@ -5,7 +5,8 @@
       "id": "personal-codex",
       "threads": {
         "base_url": "https://threads-api.filae.site",
-        "token_env": "THREADS_API_TOKEN"
+        "token_env": "THREADS_CODEX_TOKEN",
+        "user_id": "CODEX_BOT_USER_ID"
       },
       "match": {
         "channel_ids": ["CHANNEL_ID"],
@@ -20,6 +21,28 @@
       "safety": {
         "mode": "read-only",
         "allowed_tools": []
+      }
+    },
+    {
+      "id": "personal-claude-code",
+      "threads": {
+        "base_url": "https://threads-api.filae.site",
+        "token_env": "THREADS_CLAUDE_CODE_TOKEN",
+        "user_id": "CLAUDE_CODE_BOT_USER_ID"
+      },
+      "match": {
+        "channel_ids": ["CHANNEL_ID"],
+        "thread_ids": []
+      },
+      "runner": {
+        "type": "claude-code",
+        "command": "npx",
+        "args": ["-y", "@anthropic-ai/claude-code", "-p", "--verbose", "--output-format", "stream-json"],
+        "working_dir": "/Users/dancorin/dev"
+      },
+      "safety": {
+        "mode": "read-only",
+        "allowed_tools": ["Read", "Bash(git status:*)"]
       }
     }
   ]

@@ -86,10 +86,16 @@ func (d Daemon) HandleEvent(ctx context.Context, scope config.Scope, sender Send
 	if event.Cursor != "" {
 		defer d.Store.SaveCursor(context.WithoutCancel(ctx), scope.ID, event.Cursor)
 	}
-	if event.Type != "message.created" && event.Type != "message.invoked" {
+	if event.Type != "message.created" && event.Type != "message.invoked" && event.Type != "message" {
+		return nil
+	}
+	if event.Message.Content == "" {
 		return nil
 	}
 	if !scope.Matches(event.ChannelID, event.ThreadID) {
+		return nil
+	}
+	if scope.Threads.UserID != "" && event.Message.SenderID == scope.Threads.UserID {
 		return nil
 	}
 	eventID := event.ID
@@ -107,7 +113,7 @@ func (d Daemon) HandleEvent(ctx context.Context, scope config.Scope, sender Send
 	if out.Text == "" {
 		return nil
 	}
-	return sender.SendMessage(ctx, event.ChannelID, threads.SendMessageRequest{Content: out.Text, ThreadID: event.ThreadID, Metadata: map[string]any{"source": "threads-agent-bridge", "scope_id": scope.ID}})
+	return sender.SendMessage(ctx, event.ChannelID, threads.SendMessageRequest{Content: out.Text, ThreadID: event.ThreadID, MessageType: "response", Metadata: map[string]any{"source": "threads-agent-bridge", "kind": "final", "scope_id": scope.ID}})
 }
 
 func defaultClients(scope config.Scope, token string) (EventSource, Sender) {

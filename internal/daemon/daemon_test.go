@@ -25,6 +25,25 @@ func (f *fakeSender) SendMessage(ctx context.Context, channelID string, req thre
 	return nil
 }
 
+func TestHandleEventIgnoresOwnMessages(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	r := &fakeRunner{}
+	s := &fakeSender{}
+	d := Daemon{Store: st, Runner: r}
+	scope := config.Scope{ID: "s1", Threads: config.ThreadsConfig{UserID: "bot1"}}
+	event := threads.Event{ID: "e1", Type: "message", ChannelID: "c1", Message: threads.Message{ID: "m1", Content: "hi", SenderID: "bot1"}}
+	if err := d.HandleEvent(context.Background(), scope, s, event); err != nil {
+		t.Fatal(err)
+	}
+	if r.calls != 0 || len(s.sent) != 0 {
+		t.Fatalf("calls=%d sent=%d", r.calls, len(s.sent))
+	}
+}
+
 func TestHandleEventRoutesAndDedupes(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -45,8 +64,11 @@ func TestHandleEventRoutesAndDedupes(t *testing.T) {
 	if r.calls != 1 || len(s.sent) != 1 {
 		t.Fatalf("calls=%d sent=%d", r.calls, len(s.sent))
 	}
-	if s.sent[0].ThreadID != "t1" || s.sent[0].Content != "reply to hi" {
+	if s.sent[0].ThreadID != "t1" || s.sent[0].Content != "reply to hi" || s.sent[0].MessageType != "response" {
 		t.Fatalf("bad send: %+v", s.sent[0])
+	}
+	if s.sent[0].Metadata["kind"] != "final" || s.sent[0].Metadata["scope_id"] != "s1" {
+		t.Fatalf("bad final metadata: %+v", s.sent[0].Metadata)
 	}
 	cursor, err := st.Cursor(context.Background(), "s1")
 	if err != nil || cursor != "cur1" {

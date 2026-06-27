@@ -1,5 +1,7 @@
 package threads
 
+import "encoding/json"
+
 type Event struct {
 	ID        string  `json:"id"`
 	Cursor    string  `json:"cursor"`
@@ -15,8 +17,87 @@ type Message struct {
 	SenderID string `json:"senderId"`
 }
 
+func (e *Event) UnmarshalJSON(data []byte) error {
+	type eventAlias Event
+	var raw struct {
+		eventAlias
+		ChannelIDSnake string          `json:"channel_id"`
+		ThreadIDSnake  string          `json:"thread_id"`
+		MessageID      string          `json:"messageId"`
+		MessageIDSnake string          `json:"message_id"`
+		UserID         string          `json:"userId"`
+		UserIDSnake    string          `json:"user_id"`
+		Content        string          `json:"content"`
+		MessageRaw     json.RawMessage `json:"message"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*e = Event(raw.eventAlias)
+	if e.ChannelID == "" {
+		e.ChannelID = raw.ChannelIDSnake
+	}
+	if e.ThreadID == "" {
+		e.ThreadID = raw.ThreadIDSnake
+	}
+	if len(raw.MessageRaw) > 0 && string(raw.MessageRaw) != "null" {
+		var msg struct {
+			Message
+			SenderIDSnake string `json:"sender_id"`
+			UserID        string `json:"userId"`
+			UserIDSnake   string `json:"user_id"`
+		}
+		if err := json.Unmarshal(raw.MessageRaw, &msg); err != nil {
+			return err
+		}
+		e.Message = msg.Message
+		if e.Message.SenderID == "" {
+			switch {
+			case msg.SenderIDSnake != "":
+				e.Message.SenderID = msg.SenderIDSnake
+			case msg.UserID != "":
+				e.Message.SenderID = msg.UserID
+			case msg.UserIDSnake != "":
+				e.Message.SenderID = msg.UserIDSnake
+			}
+		}
+	}
+	if e.Message.ID == "" {
+		switch {
+		case raw.MessageID != "":
+			e.Message.ID = raw.MessageID
+		case raw.MessageIDSnake != "":
+			e.Message.ID = raw.MessageIDSnake
+		case e.ID != "":
+			e.Message.ID = e.ID
+		}
+	}
+	if e.Message.Content == "" {
+		e.Message.Content = raw.Content
+	}
+	if e.Message.SenderID == "" {
+		switch {
+		case raw.UserID != "":
+			e.Message.SenderID = raw.UserID
+		case raw.UserIDSnake != "":
+			e.Message.SenderID = raw.UserIDSnake
+		}
+	}
+	return nil
+}
+
+type Attachment struct {
+	ID          string `json:"id"`
+	Filename    string `json:"filename"`
+	ContentType string `json:"contentType"`
+	SizeBytes   int64  `json:"sizeBytes"`
+	URL         string `json:"url"`
+}
+
 type SendMessageRequest struct {
-	Content  string         `json:"content"`
-	ThreadID string         `json:"threadId,omitempty"`
-	Metadata map[string]any `json:"metadata,omitempty"`
+	Content       string         `json:"content"`
+	ThreadID      string         `json:"threadId,omitempty"`
+	MessageType   string         `json:"message_type,omitempty"`
+	AttachmentIDs []string       `json:"attachmentIds,omitempty"`
+	Metadata      map[string]any `json:"metadata,omitempty"`
 }

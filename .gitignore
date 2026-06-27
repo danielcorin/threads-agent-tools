@@ -4,4 +4,6 @@
 *.db
 *.db-*
 .env
+.secrets/
+config.local.json
 .DS_Store

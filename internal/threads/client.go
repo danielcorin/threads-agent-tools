@@ -5,8 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -72,14 +78,59 @@ func (c Client) Events(ctx context.Context, since string) (<-chan Event, <-chan 
 	return events, errs
 }
 
+func (c Client) UploadFile(ctx context.Context, path string) (Attachment, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return Attachment{}, err
+	}
+	defer file.Close()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	header := make(textproto.MIMEHeader)
+	header.Set("Content-Disposition", mime.FormatMediaType("form-data", map[string]string{"name": "file", "filename": filepath.Base(path)}))
+	header.Set("Content-Type", detectContentType(path, file))
+	part, err := writer.CreatePart(header)
+	if err != nil {
+		return Attachment{}, err
+	}
+	if _, err := io.Copy(part, file); err != nil {
+		return Attachment{}, err
+	}
+	if err := writer.Close(); err != nil {
+		return Attachment{}, err
+	}
+
+	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.BaseURL, "/")+"/uploads", &body)
+	if err != nil {
+		return Attachment{}, err
+	}
+	hreq.Header.Set("Content-Type", writer.FormDataContentType())
+	if c.Token != "" {
+		hreq.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	resp, err := c.httpClient().Do(hreq)
+	if err != nil {
+		return Attachment{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return Attachment{}, fmt.Errorf("threads upload file: status %d", resp.StatusCode)
+	}
+	var attachment Attachment
+	if err := json.NewDecoder(resp.Body).Decode(&attachment); err != nil {
+		return Attachment{}, err
+	}
+	if attachment.ID == "" {
+		return Attachment{}, fmt.Errorf("threads upload file: response missing attachment id")
+	}
+	return attachment, nil
+}
+
 func (c Client) SendMessage(ctx context.Context, channelID string, req SendMessageRequest) error {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return err
-	}
-	httpClient := c.HTTP
-	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
 	u := strings.TrimRight(c.BaseURL, "/") + "/channels/" + url.PathEscape(channelID) + "/messages"
 	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
@@ -90,7 +141,7 @@ func (c Client) SendMessage(ctx context.Context, channelID string, req SendMessa
 	if c.Token != "" {
 		hreq.Header.Set("Authorization", "Bearer "+c.Token)
 	}
-	resp, err := httpClient.Do(hreq)
+	resp, err := c.httpClient().Do(hreq)
 	if err != nil {
 		return err
 	}
@@ -99,4 +150,24 @@ func (c Client) SendMessage(ctx context.Context, channelID string, req SendMessa
 		return fmt.Errorf("threads send message: status %d", resp.StatusCode)
 	}
 	return nil
+}
+
+func detectContentType(path string, file *os.File) string {
+	if fromExt := mime.TypeByExtension(filepath.Ext(path)); fromExt != "" {
+		return fromExt
+	}
+	buf := make([]byte, 512)
+	n, _ := file.Read(buf)
+	_, _ = file.Seek(0, io.SeekStart)
+	if n == 0 {
+		return "application/octet-stream"
+	}
+	return http.DetectContentType(buf[:n])
+}
+
+func (c Client) httpClient() *http.Client {
+	if c.HTTP != nil {
+		return c.HTTP
+	}
+	return &http.Client{Timeout: 30 * time.Second}
 }

@@ -23,6 +23,7 @@ type ThreadsConfig struct {
 	BaseURL  string `json:"base_url"`
 	Token    string `json:"token"`
 	TokenEnv string `json:"token_env"`
+	UserID   string `json:"user_id"`
 	Since    string `json:"since"`
 }
 
@@ -65,14 +66,24 @@ func Load(path string) (Config, error) {
 		if cfg.Scopes[i].Threads.Token == "" && cfg.Scopes[i].Threads.TokenEnv == "" {
 			return Config{}, fmt.Errorf("scope %q requires threads.token or threads.token_env", cfg.Scopes[i].ID)
 		}
-		if cfg.Scopes[i].Runner.Command == "" {
-			cfg.Scopes[i].Runner.Command = "codex"
-		}
 		if cfg.Scopes[i].Runner.Type == "" {
 			cfg.Scopes[i].Runner.Type = "codex"
 		}
-		if len(cfg.Scopes[i].Runner.Args) == 0 && cfg.Scopes[i].Runner.Type == "codex" {
-			cfg.Scopes[i].Runner.Args = []string{"exec", "--json"}
+		switch cfg.Scopes[i].Runner.Type {
+		case "claude-code":
+			if cfg.Scopes[i].Runner.Command == "" {
+				cfg.Scopes[i].Runner.Command = "claude"
+			}
+			if len(cfg.Scopes[i].Runner.Args) == 0 {
+				cfg.Scopes[i].Runner.Args = []string{"-p", "--verbose", "--output-format", "stream-json"}
+			}
+		default:
+			if cfg.Scopes[i].Runner.Command == "" {
+				cfg.Scopes[i].Runner.Command = "codex"
+			}
+			if len(cfg.Scopes[i].Runner.Args) == 0 && cfg.Scopes[i].Runner.Type == "codex" {
+				cfg.Scopes[i].Runner.Args = []string{"exec", "--json"}
+			}
 		}
 	}
 	return cfg, nil
