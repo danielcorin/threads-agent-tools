@@ -32,22 +32,29 @@ Run tests first:
 go test ./...
 ```
 
-Build both executables for each target from a clean checkout:
+Build both executables for each target from a clean checkout. Prefer one inspected loop so every archive gets the same files and naming:
 
 ```bash
+VERSION=v0.1.0
+rm -rf dist
 mkdir -p dist
 
-GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w" \
-  -o dist/threads-agent-bridge_darwin_arm64/threads-agent-bridge \
-  ./cmd/threads-agent-bridge
-GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w" \
-  -o dist/threads-agent-bridge_darwin_arm64/threads \
-  ./cmd/threads
+for target in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64; do
+  os=${target%/*}
+  arch=${target#*/}
+  name="threads-agent-bridge_${VERSION}_${os}_${arch}"
+  mkdir -p "dist/$name"
 
-cp README.md config.example.json dist/threads-agent-bridge_darwin_arm64/
+  GOOS=$os GOARCH=$arch CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" \
+    -o "dist/$name/threads-agent-bridge" ./cmd/threads-agent-bridge
+  GOOS=$os GOARCH=$arch CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" \
+    -o "dist/$name/threads" ./cmd/threads
+
+  cp README.md config.example.json "dist/$name/"
+done
 ```
 
-Repeat for each supported `GOOS/GOARCH`. Prefer scripting this once it is used more than once; keep the script small and inspectable.
+If a platform is intentionally skipped, call that out in the release notes.
 
 ### 3. Package archives and checksums
 
@@ -55,13 +62,16 @@ Create platform-specific archives whose names include version, OS, and arch:
 
 ```bash
 VERSION=v0.1.0
-cd dist
 
-tar -czf "threads-agent-bridge_${VERSION}_darwin_arm64.tar.gz" \
-  threads-agent-bridge_darwin_arm64
+for dir in dist/threads-agent-bridge_${VERSION}_*; do
+  [ -d "$dir" ] || continue
+  tar -C dist -czf "${dir}.tar.gz" "$(basename "$dir")"
+done
 
-shasum -a 256 threads-agent-bridge_${VERSION}_*.tar.gz > checksums.txt
+(cd dist && shasum -a 256 threads-agent-bridge_${VERSION}_*.tar.gz > checksums.txt)
 ```
+
+Use `tar -C dist` and compute checksums from inside `dist` so archive contents and checksum lines use clean relative names, not local absolute paths or `dist/...` prefixes.
 
 For zip-only environments, `.zip` is acceptable, but prefer `.tar.gz` for Unix/macOS users.
 
@@ -87,18 +97,34 @@ If possible, run a local end-to-end smoke test against a non-production Threads 
 
 ### 5. Publish the release
 
-For GitHub releases, prefer the GitHub CLI:
+For GitHub releases, prefer the GitHub CLI. Check for an existing tag/release first so a retry does not fail halfway through:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+VERSION=v0.1.0
 
-gh release create v0.1.0 \
-  dist/threads-agent-bridge_v0.1.0_*.tar.gz \
+git fetch --tags origin
+if git rev-parse "$VERSION" >/dev/null 2>&1 || gh release view "$VERSION" >/dev/null 2>&1; then
+  echo "Release or tag already exists: $VERSION" >&2
+  exit 1
+fi
+
+cat > "dist/RELEASE_NOTES_${VERSION}.md" <<'EOF'
+# threads-agent-bridge v0.1.0
+
+...
+EOF
+
+git tag "$VERSION"
+git push origin "$VERSION"
+
+gh release create "$VERSION" \
+  dist/threads-agent-bridge_${VERSION}_*.tar.gz \
   dist/checksums.txt \
-  --title "threads-agent-bridge v0.1.0" \
-  --notes-file RELEASE_NOTES.md
+  --title "threads-agent-bridge $VERSION" \
+  --notes-file "dist/RELEASE_NOTES_${VERSION}.md"
 ```
+
+If the tag push succeeds but release creation/upload fails, do not recreate the tag. Fix the issue, then use `gh release create` if no release exists yet, or `gh release upload <tag> <assets...> --clobber` if the release exists with missing/bad assets.
 
 Release notes should include:
 
@@ -170,4 +196,8 @@ checksums.txt
 - A user artifact must not assume Daniel's local paths, LaunchAgent label, or `config.local.json`.
 - Token setup belongs in docs, not in artifacts. Use `token_env` in configs rather than inline tokens.
 - Smoke-test the compressed artifact after extraction; missing execute bits or missing companion files are common release failures.
+- Check for existing tags/releases before `git tag`/`gh release create`; retries are common during manual releases.
+- Generate release notes before running `gh release create`, and pass the actual path used, e.g. `dist/RELEASE_NOTES_v0.1.0.md`.
+- After publishing, verify with `gh release view <tag> --json assets,url` and make sure every expected OS/arch archive plus `checksums.txt` is present.
+- `dist/` may be ignored, so `git status --short` can look clean even with large generated artifacts. Use `git status --ignored --short dist` or `ls -lh dist` before deciding what to clean up.
 - If adding a release workflow, keep it boring: Go toolchain, `go test ./...`, cross-compile, archive, checksum, upload. Avoid introducing a release framework until the manual script becomes painful.
