@@ -14,6 +14,8 @@ Local single-binary daemon that connects Threads owner-scoped events to local ag
 - Claude Code runs through `claude -p --verbose --output-format stream-json`, captures `session_id`, and resumes replies with `--resume <session_id>`; if `claude` is not installed on PATH, use `npx -y @anthropic-ai/claude-code` as the command and keep the Claude flags in `runner.args`.
 - Runner subprocesses receive `THREADS_BASE_URL`, `THREADS_API_TOKEN`, `THREADS_CHANNEL_ID`, `THREADS_THREAD_ID`, `THREADS_MESSAGE_ID`, `THREADS_SCOPE_ID`, and `THREADS_RUNNER_SESSION_ID` so they can call the companion `threads` CLI.
 - `threads send` posts immediate side-effect/interim messages and can attach files/images through Threads uploads. Final answers remain stdout from the runner; the bridge posts that stdout once the runner exits.
+- The daemon creates a Threads process as soon as a run starts, marks the triggering message `processing`, and updates the process/message to `done`, `error`, or `killed` when the run exits.
+- Clicking the `x` in the Threads tool-call/process UI sends a process kill event; the bridge maps that process id to the active local subprocess context and cancels/kills the Codex or Claude Code loop.
 - The daemon streams Codex/Claude Code tool-call events from JSONL stdout into Threads step rows (`progress` on start, `tool_output` on completion) with `metadata.trigger_id` set to the user message that triggered the run, so the existing Threads tool-call rail attaches to that message as calls occur.
 
 ## Quick start
@@ -68,7 +70,7 @@ threads send --attachment-ids att_123,att_456
 
 `threads send` reads defaults from `THREADS_BASE_URL`, `THREADS_API_TOKEN`, `THREADS_CHANNEL_ID`, and `THREADS_THREAD_ID`, which the bridge injects into runner subprocesses. For top-level messages, `THREADS_THREAD_ID` is normalized to the root message id so interim and final responses land in the same Threads thread. The command defaults to `message_type: "agent_update"` and metadata `{source:"threads-cli", kind:"interim"}`. `--file` and `--image` may be repeated; each path is uploaded to `POST /uploads`, then the returned attachment IDs are included when posting the message. `--attachment-ids` can reuse already-uploaded IDs, and attachment-only messages are allowed. The agent should still write its final answer to stdout; the daemon posts stdout as the final `response` message.
 
-Tool-call streaming is bridge-owned. Agents do not need to know the Threads UI schema: Codex `command_execution` JSONL items and Claude Code `tool_use`/`tool_result` stream-json events are translated into hidden/intermediate Threads step messages by the daemon.
+Tool-call streaming and process lifecycle are bridge-owned. Agents do not need to know the Threads UI schema: Codex `command_execution` JSONL items and Claude Code `tool_use`/`tool_result` stream-json events are translated into hidden/intermediate Threads step messages by the daemon. The daemon also records `process.activity` counts for tool calls and replies so the Threads process list reflects local CLI work.
 
 ## Config
 

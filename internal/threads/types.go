@@ -8,6 +8,8 @@ type Event struct {
 	Type      string  `json:"type"`
 	ChannelID string  `json:"channelId"`
 	ThreadID  string  `json:"threadId"`
+	MessageID string  `json:"messageId"`
+	ProcessID string  `json:"processId"`
 	Message   Message `json:"message"`
 }
 
@@ -25,6 +27,7 @@ func (e *Event) UnmarshalJSON(data []byte) error {
 		ThreadIDSnake  string          `json:"thread_id"`
 		MessageID      string          `json:"messageId"`
 		MessageIDSnake string          `json:"message_id"`
+		ProcessIDSnake string          `json:"process_id"`
 		UserID         string          `json:"userId"`
 		UserIDSnake    string          `json:"user_id"`
 		Content        string          `json:"content"`
@@ -62,12 +65,21 @@ func (e *Event) UnmarshalJSON(data []byte) error {
 			}
 		}
 	}
-	if e.Message.ID == "" {
+	if e.MessageID == "" {
 		switch {
 		case raw.MessageID != "":
-			e.Message.ID = raw.MessageID
+			e.MessageID = raw.MessageID
 		case raw.MessageIDSnake != "":
-			e.Message.ID = raw.MessageIDSnake
+			e.MessageID = raw.MessageIDSnake
+		}
+	}
+	if e.ProcessID == "" {
+		e.ProcessID = raw.ProcessIDSnake
+	}
+	if e.Message.ID == "" {
+		switch {
+		case e.MessageID != "":
+			e.Message.ID = e.MessageID
 		case e.ID != "":
 			e.Message.ID = e.ID
 		}
@@ -100,4 +112,32 @@ type SendMessageRequest struct {
 	MessageType   string         `json:"message_type,omitempty"`
 	AttachmentIDs []string       `json:"attachmentIds,omitempty"`
 	Metadata      map[string]any `json:"metadata,omitempty"`
+}
+
+type CreateProcessRequest struct {
+	ID        string `json:"id,omitempty"`
+	ChannelID string `json:"channel_id"`
+	MessageID string `json:"message_id"`
+	UserID    string `json:"user_id,omitempty"`
+	Status    string `json:"status,omitempty"`
+	PID       int    `json:"pid,omitempty"`
+}
+
+type CreateProcessResponse struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
+}
+
+type UpdateProcessRequest struct {
+	Status string `json:"status,omitempty"`
+}
+
+type ProcessActivityRequest struct {
+	Type string `json:"type"`
+}
+
+type UpdateMessageProcessStatusRequest struct {
+	ProcessID string `json:"processId"`
+	Status    string `json:"status"`
+	ErrorText string `json:"error_text,omitempty"`
 }

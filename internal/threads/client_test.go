@@ -53,6 +53,41 @@ func TestUploadFile(t *testing.T) {
 	}
 }
 
+func TestProcessLifecycleRequests(t *testing.T) {
+	var seen []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Method+" "+r.URL.Path)
+		if r.URL.Path == "/processes" {
+			_ = json.NewEncoder(w).Encode(CreateProcessResponse{ID: "p1", Status: "running"})
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	c := Client{BaseURL: srv.URL, Token: "tok", HTTP: srv.Client()}
+	if out, err := c.CreateProcess(context.Background(), CreateProcessRequest{ID: "p1", ChannelID: "c1", MessageID: "m1", Status: "running"}); err != nil || out.ID != "p1" {
+		t.Fatalf("create out=%+v err=%v", out, err)
+	}
+	if err := c.UpdateMessageProcessStatus(context.Background(), "m1", UpdateMessageProcessStatusRequest{ProcessID: "p1", Status: "processing"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.RecordProcessActivity(context.Background(), "p1", ProcessActivityRequest{Type: "tool_call"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.UpdateProcess(context.Background(), "p1", UpdateProcessRequest{Status: "done"}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"POST /processes", "POST /messages/m1/process", "POST /processes/p1/activity", "PATCH /processes/p1"}
+	if len(seen) != len(want) {
+		t.Fatalf("seen=%v", seen)
+	}
+	for i := range want {
+		if seen[i] != want[i] {
+			t.Fatalf("seen=%v want=%v", seen, want)
+		}
+	}
+}
+
 func TestSendMessage(t *testing.T) {
 	var gotAuth, gotPath, gotThread string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

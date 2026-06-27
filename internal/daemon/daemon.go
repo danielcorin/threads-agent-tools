@@ -3,8 +3,11 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/danielcorin/threads-agent-bridge/internal/config"
@@ -20,7 +23,14 @@ type Sender interface {
 	SendMessage(context.Context, string, threads.SendMessageRequest) error
 }
 
-type ClientFactory func(config.Scope, string) (EventSource, Sender)
+type ProcessClient interface {
+	CreateProcess(context.Context, threads.CreateProcessRequest) (threads.CreateProcessResponse, error)
+	UpdateProcess(context.Context, string, threads.UpdateProcessRequest) error
+	RecordProcessActivity(context.Context, string, threads.ProcessActivityRequest) error
+	UpdateMessageProcessStatus(context.Context, string, threads.UpdateMessageProcessStatusRequest) error
+}
+
+type ClientFactory func(config.Scope, string) (EventSource, Sender, ProcessClient)
 
 type Daemon struct {
 	Config  config.Config
@@ -28,9 +38,12 @@ type Daemon struct {
 	Runner  runner.Runner
 	Clients ClientFactory
 	Logger  *slog.Logger
+
+	activeMu sync.Mutex
+	active   map[string]context.CancelFunc
 }
 
-func (d Daemon) Run(ctx context.Context) error {
+func (d *Daemon) Run(ctx context.Context) error {
 	if d.Runner == nil {
 		d.Runner = runner.LocalRunner{}
 	}
@@ -53,7 +66,7 @@ func (d Daemon) Run(ctx context.Context) error {
 	}
 }
 
-func (d Daemon) runScope(ctx context.Context, scope config.Scope) error {
+func (d *Daemon) runScope(ctx context.Context, scope config.Scope) error {
 	token, err := scope.Token()
 	if err != nil {
 		return err
@@ -65,7 +78,7 @@ func (d Daemon) runScope(ctx context.Context, scope config.Scope) error {
 			return err
 		}
 	}
-	eventsClient, sender := d.Clients(scope, token)
+	eventsClient, sender, processes := d.Clients(scope, token)
 	events, errs := eventsClient.Events(ctx, since)
 	for {
 		select {
@@ -73,9 +86,15 @@ func (d Daemon) runScope(ctx context.Context, scope config.Scope) error {
 			if !ok {
 				return nil
 			}
-			if err := d.HandleEvent(ctx, scope, sender, event); err != nil {
-				d.Logger.Error("handle event", "scope", scope.ID, "error", err)
+			if isProcessKillEvent(event) {
+				d.HandleProcessKill(event)
+				continue
 			}
+			go func(event threads.Event) {
+				if err := d.HandleEvent(ctx, scope, sender, processes, event); err != nil {
+					d.Logger.Error("handle event", "scope", scope.ID, "error", err)
+				}
+			}(event)
 		case err := <-errs:
 			return err
 		case <-ctx.Done():
@@ -84,7 +103,7 @@ func (d Daemon) runScope(ctx context.Context, scope config.Scope) error {
 	}
 }
 
-func (d Daemon) HandleEvent(ctx context.Context, scope config.Scope, sender Sender, event threads.Event) error {
+func (d *Daemon) HandleEvent(ctx context.Context, scope config.Scope, sender Sender, processes ProcessClient, event threads.Event) error {
 	if event.Cursor != "" {
 		defer d.Store.SaveCursor(context.WithoutCancel(ctx), scope.ID, event.Cursor)
 	}
@@ -113,8 +132,36 @@ func (d Daemon) HandleEvent(ctx context.Context, scope config.Scope, sender Send
 	if err != nil {
 		return err
 	}
-	out, err := d.Runner.Run(ctx, scope, runner.Input{ScopeID: scope.ID, Event: event, ThreadID: threadID, RunnerSessionID: runnerSessionID, NewSession: runnerSessionID == "", OnToolEvent: d.toolEventHandler(scope, sender, event, threadID)})
+	processID := processID(scope.ID, event.Message.ID)
+	if processes != nil {
+		created, err := processes.CreateProcess(ctx, threads.CreateProcessRequest{ID: processID, ChannelID: event.ChannelID, MessageID: event.Message.ID, UserID: event.Message.SenderID, Status: "running", PID: os.Getpid()})
+		if err != nil {
+			return err
+		}
+		if created.ID != "" {
+			processID = created.ID
+		}
+		if err := processes.UpdateMessageProcessStatus(ctx, event.Message.ID, threads.UpdateMessageProcessStatusRequest{ProcessID: processID, Status: "processing"}); err != nil {
+			return err
+		}
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	d.trackProcess(processID, cancel)
+	defer d.untrackProcess(processID)
+
+	out, err := d.Runner.Run(runCtx, scope, runner.Input{ScopeID: scope.ID, Event: event, ThreadID: threadID, RunnerSessionID: runnerSessionID, NewSession: runnerSessionID == "", OnToolEvent: d.toolEventHandler(scope, sender, processes, processID, event, threadID)})
 	if err != nil {
+		status := "error"
+		if runCtx.Err() != nil || ctx.Err() != nil {
+			status = "killed"
+		}
+		if processes != nil {
+			_ = processes.UpdateProcess(context.WithoutCancel(ctx), processID, threads.UpdateProcessRequest{Status: status})
+			_ = processes.UpdateMessageProcessStatus(context.WithoutCancel(ctx), event.Message.ID, threads.UpdateMessageProcessStatusRequest{ProcessID: processID, Status: status})
+		}
+		if status == "killed" {
+			return nil
+		}
 		return err
 	}
 	if out.RunnerSessionID != "" && out.RunnerSessionID != runnerSessionID {
@@ -122,13 +169,26 @@ func (d Daemon) HandleEvent(ctx context.Context, scope config.Scope, sender Send
 			return err
 		}
 	}
-	if out.Text == "" {
-		return nil
+	if out.Text != "" {
+		if processes != nil {
+			_ = processes.RecordProcessActivity(context.WithoutCancel(ctx), processID, threads.ProcessActivityRequest{Type: "reply"})
+		}
+		if err := sender.SendMessage(ctx, event.ChannelID, threads.SendMessageRequest{Content: out.Text, ThreadID: threadID, MessageType: "response", Metadata: map[string]any{"source": "threads-agent-bridge", "kind": "final", "scope_id": scope.ID, "runner_session_id": out.RunnerSessionID, "process_id": processID}}); err != nil {
+			if processes != nil {
+				_ = processes.UpdateProcess(context.WithoutCancel(ctx), processID, threads.UpdateProcessRequest{Status: "error"})
+				_ = processes.UpdateMessageProcessStatus(context.WithoutCancel(ctx), event.Message.ID, threads.UpdateMessageProcessStatusRequest{ProcessID: processID, Status: "error", ErrorText: err.Error()})
+			}
+			return err
+		}
 	}
-	return sender.SendMessage(ctx, event.ChannelID, threads.SendMessageRequest{Content: out.Text, ThreadID: threadID, MessageType: "response", Metadata: map[string]any{"source": "threads-agent-bridge", "kind": "final", "scope_id": scope.ID, "runner_session_id": out.RunnerSessionID}})
+	if processes != nil {
+		_ = processes.UpdateProcess(context.WithoutCancel(ctx), processID, threads.UpdateProcessRequest{Status: "done"})
+		_ = processes.UpdateMessageProcessStatus(context.WithoutCancel(ctx), event.Message.ID, threads.UpdateMessageProcessStatusRequest{ProcessID: processID, Status: "done"})
+	}
+	return nil
 }
 
-func (d Daemon) toolEventHandler(scope config.Scope, sender Sender, event threads.Event, threadID string) runner.ToolEventHandler {
+func (d *Daemon) toolEventHandler(scope config.Scope, sender Sender, processes ProcessClient, processID string, event threads.Event, threadID string) runner.ToolEventHandler {
 	active := map[string]runner.ToolEvent{}
 	return func(ctx context.Context, toolEvent runner.ToolEvent) error {
 		if toolEvent.ID != "" {
@@ -141,6 +201,11 @@ func (d Daemon) toolEventHandler(scope config.Scope, sender Sender, event thread
 				if toolEvent.Input == nil {
 					toolEvent.Input = previous.Input
 				}
+			}
+		}
+		if processes != nil && toolEvent.Status == runner.ToolEventStarted {
+			if err := processes.RecordProcessActivity(context.WithoutCancel(ctx), processID, threads.ProcessActivityRequest{Type: "tool_call"}); err != nil && d.Logger != nil {
+				d.Logger.Warn("record tool activity", "scope", scope.ID, "tool", toolEvent.Name, "error", err)
 			}
 		}
 		content := formatToolEvent(toolEvent)
@@ -163,6 +228,7 @@ func (d Daemon) toolEventHandler(scope config.Scope, sender Sender, event thread
 				"error":      toolEvent.Error,
 				"input":      toolEvent.Input,
 				"output":     toolEvent.Output,
+				"process_id": processID,
 			},
 		})
 		if err != nil && d.Logger != nil {
@@ -257,9 +323,56 @@ func rootThreadID(event threads.Event) string {
 	return event.Message.ID
 }
 
-func defaultClients(scope config.Scope, token string) (EventSource, Sender) {
+func (d *Daemon) trackProcess(processID string, cancel context.CancelFunc) {
+	d.activeMu.Lock()
+	defer d.activeMu.Unlock()
+	if d.active == nil {
+		d.active = map[string]context.CancelFunc{}
+	}
+	d.active[processID] = cancel
+}
+
+func (d *Daemon) untrackProcess(processID string) {
+	d.activeMu.Lock()
+	defer d.activeMu.Unlock()
+	delete(d.active, processID)
+}
+
+func (d *Daemon) HandleProcessKill(event threads.Event) {
+	if event.ProcessID == "" {
+		return
+	}
+	d.activeMu.Lock()
+	cancel := d.active[event.ProcessID]
+	d.activeMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+func isProcessKillEvent(event threads.Event) bool {
+	return event.Type == "process_kill" || event.Type == "process.kill"
+}
+
+func processID(scopeID, messageID string) string {
+	return sanitizeID(fmt.Sprintf("bridge-%s-%s-%d", scopeID, messageID, time.Now().UnixNano()))
+}
+
+func sanitizeID(value string) string {
+	var b strings.Builder
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('-')
+		}
+	}
+	return b.String()
+}
+
+func defaultClients(scope config.Scope, token string) (EventSource, Sender, ProcessClient) {
 	client := threads.Client{BaseURL: scope.Threads.BaseURL, Token: token}
-	return client, client
+	return client, client, client
 }
 
 func SleepBackoff(attempt int) time.Duration {

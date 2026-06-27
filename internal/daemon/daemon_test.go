@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/danielcorin/threads-agent-bridge/internal/config"
 	"github.com/danielcorin/threads-agent-bridge/internal/runner"
@@ -26,10 +27,36 @@ func (f *fakeRunner) Run(ctx context.Context, scope config.Scope, in runner.Inpu
 	return runner.Output{Text: "reply to " + in.Event.Message.Content, RunnerSessionID: "runner-s1"}, nil
 }
 
-type fakeSender struct{ sent []threads.SendMessageRequest }
+type fakeSender struct {
+	sent            []threads.SendMessageRequest
+	created         []threads.CreateProcessRequest
+	updated         []threads.UpdateProcessRequest
+	activities      []threads.ProcessActivityRequest
+	messageStatuses []threads.UpdateMessageProcessStatusRequest
+}
 
 func (f *fakeSender) SendMessage(ctx context.Context, channelID string, req threads.SendMessageRequest) error {
 	f.sent = append(f.sent, req)
+	return nil
+}
+
+func (f *fakeSender) CreateProcess(ctx context.Context, req threads.CreateProcessRequest) (threads.CreateProcessResponse, error) {
+	f.created = append(f.created, req)
+	return threads.CreateProcessResponse{ID: req.ID, Status: "running"}, nil
+}
+
+func (f *fakeSender) UpdateProcess(ctx context.Context, processID string, req threads.UpdateProcessRequest) error {
+	f.updated = append(f.updated, req)
+	return nil
+}
+
+func (f *fakeSender) RecordProcessActivity(ctx context.Context, processID string, req threads.ProcessActivityRequest) error {
+	f.activities = append(f.activities, req)
+	return nil
+}
+
+func (f *fakeSender) UpdateMessageProcessStatus(ctx context.Context, messageID string, req threads.UpdateMessageProcessStatusRequest) error {
+	f.messageStatuses = append(f.messageStatuses, req)
 	return nil
 }
 
@@ -44,7 +71,7 @@ func TestHandleEventIgnoresOwnMessages(t *testing.T) {
 	d := Daemon{Store: st, Runner: r}
 	scope := config.Scope{ID: "s1", Threads: config.ThreadsConfig{UserID: "bot1"}}
 	event := threads.Event{ID: "e1", Type: "message", ChannelID: "c1", Message: threads.Message{ID: "m1", Content: "hi", SenderID: "bot1"}}
-	if err := d.HandleEvent(context.Background(), scope, s, event); err != nil {
+	if err := d.HandleEvent(context.Background(), scope, s, s, event); err != nil {
 		t.Fatal(err)
 	}
 	if r.calls != 0 || len(s.sent) != 0 {
@@ -63,10 +90,10 @@ func TestHandleEventRoutesAndDedupes(t *testing.T) {
 	d := Daemon{Store: st, Runner: r}
 	scope := config.Scope{ID: "s1", Match: config.MatchConfig{ChannelIDs: []string{"c1"}}}
 	event := threads.Event{ID: "e1", Cursor: "cur1", Type: "message.created", ChannelID: "c1", ThreadID: "t1", Message: threads.Message{ID: "m1", Content: "hi"}}
-	if err := d.HandleEvent(context.Background(), scope, s, event); err != nil {
+	if err := d.HandleEvent(context.Background(), scope, s, s, event); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.HandleEvent(context.Background(), scope, s, event); err != nil {
+	if err := d.HandleEvent(context.Background(), scope, s, s, event); err != nil {
 		t.Fatal(err)
 	}
 	if r.calls != 1 || len(s.sent) != 1 {
@@ -84,6 +111,16 @@ func TestHandleEventRoutesAndDedupes(t *testing.T) {
 	}
 }
 
+type blockingRunner struct {
+	started chan struct{}
+}
+
+func (r blockingRunner) Run(ctx context.Context, scope config.Scope, in runner.Input) (runner.Output, error) {
+	close(r.started)
+	<-ctx.Done()
+	return runner.Output{}, ctx.Err()
+}
+
 type toolEventRunner struct{}
 
 func (toolEventRunner) Run(ctx context.Context, scope config.Scope, in runner.Input) (runner.Output, error) {
@@ -92,6 +129,47 @@ func (toolEventRunner) Run(ctx context.Context, scope config.Scope, in runner.In
 		_ = in.OnToolEvent(ctx, runner.ToolEvent{ID: "tool-1", Name: "Bash", Output: "clean", Status: runner.ToolEventCompleted})
 	}
 	return runner.Output{Text: "done", RunnerSessionID: "runner-s1"}, nil
+}
+
+func TestHandleEventCreatesProcessStatusAndKillCancelsRun(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	s := &fakeSender{}
+	started := make(chan struct{})
+	d := Daemon{Store: st, Runner: blockingRunner{started: started}}
+	scope := config.Scope{ID: "s1", Match: config.MatchConfig{ChannelIDs: []string{"c1"}}}
+	event := threads.Event{ID: "e1", Type: "message.created", ChannelID: "c1", Message: threads.Message{ID: "m1", Content: "hi", SenderID: "u1"}}
+	done := make(chan error, 1)
+	go func() { done <- d.HandleEvent(context.Background(), scope, s, s, event) }()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("runner did not start")
+	}
+	if len(s.created) != 1 || s.created[0].MessageID != "m1" || s.created[0].UserID != "u1" {
+		t.Fatalf("bad process create: %+v", s.created)
+	}
+	if len(s.messageStatuses) != 1 || s.messageStatuses[0].Status != "processing" || s.messageStatuses[0].ProcessID == "" {
+		t.Fatalf("bad initial message status: %+v", s.messageStatuses)
+	}
+	d.HandleProcessKill(threads.Event{Type: "process_kill", ProcessID: s.messageStatuses[0].ProcessID})
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("runner was not cancelled")
+	}
+	if len(s.updated) == 0 || s.updated[len(s.updated)-1].Status != "killed" {
+		t.Fatalf("bad process updates: %+v", s.updated)
+	}
+	if got := s.messageStatuses[len(s.messageStatuses)-1].Status; got != "killed" {
+		t.Fatalf("message status=%q, want killed", got)
+	}
 }
 
 func TestHandleEventStreamsToolEventsAsTriggeredStepMessages(t *testing.T) {
@@ -104,7 +182,7 @@ func TestHandleEventStreamsToolEventsAsTriggeredStepMessages(t *testing.T) {
 	d := Daemon{Store: st, Runner: toolEventRunner{}}
 	scope := config.Scope{ID: "s1", Match: config.MatchConfig{ChannelIDs: []string{"c1"}}}
 	event := threads.Event{ID: "e1", Type: "message.created", ChannelID: "c1", Message: threads.Message{ID: "m1", Content: "hi"}}
-	if err := d.HandleEvent(context.Background(), scope, s, event); err != nil {
+	if err := d.HandleEvent(context.Background(), scope, s, s, event); err != nil {
 		t.Fatal(err)
 	}
 	if len(s.sent) != 3 {
@@ -139,11 +217,11 @@ func TestHandleEventMapsTopLevelMessageToThreadSessionAndRepliesResume(t *testin
 	scope := config.Scope{ID: "s1", Match: config.MatchConfig{ChannelIDs: []string{"c1"}}}
 
 	root := threads.Event{ID: "e-root", Type: "message.created", ChannelID: "c1", Message: threads.Message{ID: "m-root", Content: "start"}}
-	if err := d.HandleEvent(context.Background(), scope, s, root); err != nil {
+	if err := d.HandleEvent(context.Background(), scope, s, s, root); err != nil {
 		t.Fatal(err)
 	}
 	reply := threads.Event{ID: "e-reply", Type: "message.created", ChannelID: "c1", ThreadID: "m-root", Message: threads.Message{ID: "m-reply", Content: "continue"}}
-	if err := d.HandleEvent(context.Background(), scope, s, reply); err != nil {
+	if err := d.HandleEvent(context.Background(), scope, s, s, reply); err != nil {
 		t.Fatal(err)
 	}
 

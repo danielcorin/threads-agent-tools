@@ -129,12 +129,38 @@ func (c Client) UploadFile(ctx context.Context, path string) (Attachment, error)
 }
 
 func (c Client) SendMessage(ctx context.Context, channelID string, req SendMessageRequest) error {
+	u := strings.TrimRight(c.BaseURL, "/") + "/channels/" + url.PathEscape(channelID) + "/messages"
+	return c.doJSON(ctx, http.MethodPost, u, req, nil, "threads send message")
+}
+
+func (c Client) CreateProcess(ctx context.Context, req CreateProcessRequest) (CreateProcessResponse, error) {
+	var out CreateProcessResponse
+	u := strings.TrimRight(c.BaseURL, "/") + "/processes"
+	err := c.doJSON(ctx, http.MethodPost, u, req, &out, "threads create process")
+	return out, err
+}
+
+func (c Client) UpdateProcess(ctx context.Context, processID string, req UpdateProcessRequest) error {
+	u := strings.TrimRight(c.BaseURL, "/") + "/processes/" + url.PathEscape(processID)
+	return c.doJSON(ctx, http.MethodPatch, u, req, nil, "threads update process")
+}
+
+func (c Client) RecordProcessActivity(ctx context.Context, processID string, req ProcessActivityRequest) error {
+	u := strings.TrimRight(c.BaseURL, "/") + "/processes/" + url.PathEscape(processID) + "/activity"
+	return c.doJSON(ctx, http.MethodPost, u, req, nil, "threads process activity")
+}
+
+func (c Client) UpdateMessageProcessStatus(ctx context.Context, messageID string, req UpdateMessageProcessStatusRequest) error {
+	u := strings.TrimRight(c.BaseURL, "/") + "/messages/" + url.PathEscape(messageID) + "/process"
+	return c.doJSON(ctx, http.MethodPost, u, req, nil, "threads message process status")
+}
+
+func (c Client) doJSON(ctx context.Context, method, u string, req any, out any, label string) error {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return err
 	}
-	u := strings.TrimRight(c.BaseURL, "/") + "/channels/" + url.PathEscape(channelID) + "/messages"
-	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
+	hreq, err := http.NewRequestWithContext(ctx, method, u, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -148,7 +174,11 @@ func (c Client) SendMessage(ctx context.Context, channelID string, req SendMessa
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("threads send message: status %d", resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("%s: status %d: %s", label, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if out != nil {
+		return json.NewDecoder(resp.Body).Decode(out)
 	}
 	return nil
 }

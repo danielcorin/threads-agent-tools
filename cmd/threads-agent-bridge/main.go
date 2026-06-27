@@ -37,5 +37,6 @@ func run(configPath string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	slog.Info("starting threads agent bridge", "scopes", len(cfg.Scopes), "database", cfg.DatabasePath)
-	return daemon.Daemon{Config: cfg, Store: st}.Run(ctx)
+	d := daemon.Daemon{Config: cfg, Store: st}
+	return d.Run(ctx)
 }
