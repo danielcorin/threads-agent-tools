@@ -8,6 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"nhooyr.io/websocket"
 )
 
 func TestEventUnmarshalThreadsMessageEnvelope(t *testing.T) {
@@ -17,6 +20,55 @@ func TestEventUnmarshalThreadsMessageEnvelope(t *testing.T) {
 	}
 	if event.Type != "message" || event.ChannelID != "c1" || event.Message.ID != "m1" || event.Message.Content != "hi" || event.Message.SenderID != "u1" {
 		t.Fatalf("unexpected event: %+v", event)
+	}
+}
+
+func TestMaintainPresenceConnectsAndRespondsToPing(t *testing.T) {
+	gotAuth := make(chan string, 1)
+	gotPong := make(chan struct{}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/ws/presence" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		gotAuth <- r.Header.Get("Authorization")
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "")
+		ctx := r.Context()
+		if err := conn.Write(ctx, websocket.MessageText, []byte(`{"type":"ping"}`)); err != nil {
+			t.Fatal(err)
+		}
+		_, data, err := conn.Read(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(data) == `{"type":"pong"}` {
+			gotPong <- struct{}{}
+		}
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c := Client{BaseURL: srv.URL, Token: "tok", HTTP: srv.Client()}
+	done := make(chan error, 1)
+	go func() { done <- c.MaintainPresence(ctx) }()
+	select {
+	case auth := <-gotAuth:
+		if auth != "Bearer tok" {
+			t.Fatalf("auth=%q", auth)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("presence did not connect")
+	}
+	select {
+	case <-gotPong:
+	case err := <-done:
+		t.Fatalf("presence ended early: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("presence did not pong")
 	}
 }
 

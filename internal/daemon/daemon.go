@@ -19,6 +19,10 @@ import (
 type EventSource interface {
 	Events(context.Context, string) (<-chan threads.Event, <-chan error)
 }
+
+type PresenceMaintainer interface {
+	MaintainPresence(context.Context) error
+}
 type Sender interface {
 	SendMessage(context.Context, string, threads.SendMessageRequest) error
 }
@@ -79,6 +83,9 @@ func (d *Daemon) runScope(ctx context.Context, scope config.Scope) error {
 		}
 	}
 	eventsClient, sender, processes := d.Clients(scope, token)
+	if presence, ok := eventsClient.(PresenceMaintainer); ok {
+		go d.maintainPresence(ctx, scope, presence)
+	}
 	events, errs := eventsClient.Events(ctx, since)
 	for {
 		select {
@@ -368,6 +375,21 @@ func sanitizeID(value string) string {
 		}
 	}
 	return b.String()
+}
+
+func (d *Daemon) maintainPresence(ctx context.Context, scope config.Scope, presence PresenceMaintainer) {
+	attempt := 0
+	for ctx.Err() == nil {
+		if err := presence.MaintainPresence(ctx); err != nil && ctx.Err() == nil && d.Logger != nil {
+			d.Logger.Warn("presence websocket disconnected", "scope", scope.ID, "error", err)
+		}
+		attempt++
+		select {
+		case <-time.After(SleepBackoff(attempt)):
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 func defaultClients(scope config.Scope, token string) (EventSource, Sender, ProcessClient) {

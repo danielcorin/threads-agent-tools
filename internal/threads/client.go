@@ -78,6 +78,44 @@ func (c Client) Events(ctx context.Context, since string) (<-chan Event, <-chan 
 	return events, errs
 }
 
+func (c Client) MaintainPresence(ctx context.Context) error {
+	u, err := url.Parse(strings.TrimRight(c.BaseURL, "/") + "/ws/presence")
+	if err != nil {
+		return err
+	}
+	if u.Scheme == "http" {
+		u.Scheme = "ws"
+	} else {
+		u.Scheme = "wss"
+	}
+	headers := http.Header{}
+	if c.Token != "" {
+		headers.Set("Authorization", "Bearer "+c.Token)
+	}
+	conn, _, err := websocket.Dial(ctx, u.String(), &websocket.DialOptions{HTTPHeader: headers})
+	if err != nil {
+		return err
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+	for {
+		_, data, err := conn.Read(ctx)
+		if err != nil {
+			return err
+		}
+		var msg struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(data, &msg); err != nil {
+			continue
+		}
+		if msg.Type == "ping" {
+			if err := conn.Write(ctx, websocket.MessageText, []byte(`{"type":"pong"}`)); err != nil {
+				return err
+			}
+		}
+	}
+}
+
 func (c Client) UploadFile(ctx context.Context, path string) (Attachment, error) {
 	file, err := os.Open(path)
 	if err != nil {
