@@ -43,6 +43,33 @@ func TestParseToolEventsFromClaudeStreamJSON(t *testing.T) {
 	}
 }
 
+func TestScanRunnerOutputHandlesLongClaudeStreamJSONLines(t *testing.T) {
+	longContent := strings.Repeat("x", 128*1024)
+	line := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_long","name":"Bash","input":{"command":"` + longContent + `"}}]}}` + "\n"
+	var buf bytes.Buffer
+	var got []ToolEvent
+	if err := scanRunnerOutput(context.Background(), strings.NewReader(line), &buf, func(ctx context.Context, event ToolEvent) error {
+		got = append(got, event)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if buf.String() != line {
+		t.Fatalf("output was not preserved")
+	}
+	if len(got) != 1 || got[0].Name != "Bash" || got[0].ID != "toolu_long" {
+		t.Fatalf("bad events: %+v", got)
+	}
+}
+
+func TestParseJSONLOutputHandlesLongLines(t *testing.T) {
+	longText := strings.Repeat("x", 128*1024)
+	got := parseJSONLText([]byte(`{"type":"result","result":"` + longText + `"}` + "\n"))
+	if got != longText {
+		t.Fatalf("got len %d want %d", len(got), len(longText))
+	}
+}
+
 func TestScanRunnerOutputFillsClaudeToolResultName(t *testing.T) {
 	input := strings.NewReader(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"pwd"}}]}}
 {"type":"user","message":{"content":[{"tool_use_id":"toolu_1","type":"tool_result","content":"ok","is_error":false}]}}

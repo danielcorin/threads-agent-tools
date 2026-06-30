@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,12 +30,14 @@ func (f *fakeRunner) Run(ctx context.Context, scope config.Scope, in runner.Inpu
 }
 
 type fakeSender struct {
-	sent            []threads.SendMessageRequest
-	created         []threads.CreateProcessRequest
-	updated         []threads.UpdateProcessRequest
-	activities      []threads.ProcessActivityRequest
-	messageStatuses []threads.UpdateMessageProcessStatusRequest
-	reactions       []runner.Reaction
+	sent             []threads.SendMessageRequest
+	created          []threads.CreateProcessRequest
+	updated          []threads.UpdateProcessRequest
+	activities       []threads.ProcessActivityRequest
+	messageStatuses  []threads.UpdateMessageProcessStatusRequest
+	reactions        []runner.Reaction
+	createProcessErr error
+	messageStatusErr error
 }
 
 func (f *fakeSender) SendMessage(ctx context.Context, channelID string, req threads.SendMessageRequest) error {
@@ -49,6 +52,9 @@ func (f *fakeSender) AddReaction(ctx context.Context, messageID, emoji string) e
 
 func (f *fakeSender) CreateProcess(ctx context.Context, req threads.CreateProcessRequest) (threads.CreateProcessResponse, error) {
 	f.created = append(f.created, req)
+	if f.createProcessErr != nil {
+		return threads.CreateProcessResponse{}, f.createProcessErr
+	}
 	return threads.CreateProcessResponse{ID: req.ID, Status: "running"}, nil
 }
 
@@ -64,7 +70,7 @@ func (f *fakeSender) RecordProcessActivity(ctx context.Context, processID string
 
 func (f *fakeSender) UpdateMessageProcessStatus(ctx context.Context, messageID string, req threads.UpdateMessageProcessStatusRequest) error {
 	f.messageStatuses = append(f.messageStatuses, req)
-	return nil
+	return f.messageStatusErr
 }
 
 func matchAllScope(id string) config.Scope {
@@ -152,6 +158,88 @@ type errorRunner struct{}
 
 func (errorRunner) Run(ctx context.Context, scope config.Scope, in runner.Input) (runner.Output, error) {
 	return runner.Output{}, errors.New("OpenRouter error: 402 insufficient credits")
+}
+
+type callbackRunner struct {
+	onRun func()
+}
+
+func (r callbackRunner) Run(ctx context.Context, scope config.Scope, in runner.Input) (runner.Output, error) {
+	if r.onRun != nil {
+		r.onRun()
+	}
+	return runner.Output{Text: "done", RunnerSessionID: "runner-s1"}, nil
+}
+
+type reconnectingEventSource struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (s *reconnectingEventSource) Events(ctx context.Context, since string) (<-chan threads.Event, <-chan error) {
+	events := make(chan threads.Event, 1)
+	errs := make(chan error, 1)
+	s.mu.Lock()
+	s.calls++
+	call := s.calls
+	s.mu.Unlock()
+	go func() {
+		defer close(events)
+		defer close(errs)
+		if call == 1 {
+			return
+		}
+		events <- threads.Event{ID: "e1", Type: "message.created", ChannelID: "c1", Message: threads.Message{ID: "m1", Content: "hi"}}
+		<-ctx.Done()
+	}()
+	return events, errs
+}
+
+func (s *reconnectingEventSource) Calls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
+}
+
+func TestRunScopeReconnectsWhenEventStreamCloses(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	source := &reconnectingEventSource{}
+	sender := &fakeSender{}
+	ctx, cancel := context.WithCancel(context.Background())
+	d := Daemon{
+		Store: st,
+		Runner: callbackRunner{onRun: func() {
+			go func() {
+				time.Sleep(10 * time.Millisecond)
+				cancel()
+			}()
+		}},
+		Clients: func(scope config.Scope, token string) (EventSource, Sender, ProcessClient) {
+			return source, sender, nil
+		},
+	}
+	scope := matchAllScope("s1")
+	scope.Threads.Token = "test-token"
+	done := make(chan error, 1)
+	go func() { done <- d.runScope(ctx, scope) }()
+	select {
+	case err := <-done:
+		if err != context.Canceled {
+			t.Fatalf("runScope returned before reconnecting: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("runScope did not reconnect and process an event")
+	}
+	if source.Calls() < 2 {
+		t.Fatalf("events calls=%d, want reconnect", source.Calls())
+	}
+	if len(sender.sent) != 1 || sender.sent[0].Content != "done" {
+		t.Fatalf("bad sent messages: %+v", sender.sent)
+	}
 }
 
 func TestHandleEventInvokesOnAnyReactionToScopeBotMessage(t *testing.T) {
@@ -273,6 +361,44 @@ func TestHandleEventAppliesStructuredReactions(t *testing.T) {
 	}
 	if len(s.sent) != 1 || s.sent[0].Content != "done" {
 		t.Fatalf("bad final message: %+v", s.sent)
+	}
+}
+
+func TestHandleEventDoesNotFailWhenMessageProcessStatusEndpointIsMissing(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	r := &fakeRunner{}
+	s := &fakeSender{messageStatusErr: errors.New("threads message process status: status 404: not found")}
+	d := Daemon{Store: st, Runner: r}
+	scope := matchAllScope("s1")
+	event := threads.Event{ID: "e1", Type: "message.created", ChannelID: "c1", Message: threads.Message{ID: "m1", Content: "hi"}}
+	if err := d.HandleEvent(context.Background(), scope, s, s, event); err != nil {
+		t.Fatal(err)
+	}
+	if r.calls != 1 || len(s.sent) != 1 || s.sent[0].Content != "reply to hi" {
+		t.Fatalf("runner should still complete, calls=%d sent=%+v", r.calls, s.sent)
+	}
+}
+
+func TestHandleEventDoesNotFailWhenProcessAPIIsMissing(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	r := &fakeRunner{}
+	s := &fakeSender{createProcessErr: errors.New("threads create process: status 404: not found")}
+	d := Daemon{Store: st, Runner: r}
+	scope := matchAllScope("s1")
+	event := threads.Event{ID: "e1", Type: "message.created", ChannelID: "c1", Message: threads.Message{ID: "m1", Content: "hi"}}
+	if err := d.HandleEvent(context.Background(), scope, s, s, event); err != nil {
+		t.Fatal(err)
+	}
+	if r.calls != 1 || len(s.sent) != 1 || s.sent[0].Content != "reply to hi" {
+		t.Fatalf("runner should still complete, calls=%d sent=%+v", r.calls, s.sent)
 	}
 }
 

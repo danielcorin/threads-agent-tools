@@ -79,17 +79,37 @@ func (d *Daemon) runScope(ctx context.Context, scope config.Scope) error {
 	if err != nil {
 		return err
 	}
-	since := scope.Threads.Since
-	if since == "" {
-		since, err = d.Store.Cursor(ctx, scope.ID)
-		if err != nil {
-			return err
-		}
-	}
 	eventsClient, sender, processes := d.Clients(scope, token)
 	if presence, ok := eventsClient.(PresenceMaintainer); ok {
 		go d.maintainPresence(ctx, scope, presence)
 	}
+	attempt := 0
+	for ctx.Err() == nil {
+		since := scope.Threads.Since
+		if since == "" {
+			since, err = d.Store.Cursor(ctx, scope.ID)
+			if err != nil {
+				return err
+			}
+		}
+		err := d.consumeEvents(ctx, scope, eventsClient, sender, processes, since)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		attempt++
+		if d.Logger != nil {
+			d.Logger.Warn("events websocket disconnected; reconnecting", "scope", scope.ID, "since", since, "attempt", attempt, "error", err)
+		}
+		select {
+		case <-time.After(SleepBackoff(attempt)):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return ctx.Err()
+}
+
+func (d *Daemon) consumeEvents(ctx context.Context, scope config.Scope, eventsClient EventSource, sender Sender, processes ProcessClient, since string) error {
 	events, errs := eventsClient.Events(ctx, since)
 	for {
 		select {
@@ -103,11 +123,19 @@ func (d *Daemon) runScope(ctx context.Context, scope config.Scope) error {
 			}
 			go func(event threads.Event) {
 				if err := d.HandleEvent(ctx, scope, sender, processes, event); err != nil {
-					d.Logger.Error("handle event", "scope", scope.ID, "error", err)
+					if d.Logger != nil {
+						d.Logger.Error("handle event", "scope", scope.ID, "error", err)
+					}
 				}
 			}(event)
-		case err := <-errs:
-			return err
+		case err, ok := <-errs:
+			if !ok {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			return nil
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -152,13 +180,15 @@ func (d *Daemon) HandleEvent(ctx context.Context, scope config.Scope, sender Sen
 	if processes != nil {
 		created, err := processes.CreateProcess(ctx, threads.CreateProcessRequest{ID: processID, ChannelID: event.ChannelID, MessageID: event.Message.ID, UserID: event.Message.SenderID, Status: "running", PID: os.Getpid()})
 		if err != nil {
-			return err
-		}
-		if created.ID != "" {
-			processID = created.ID
-		}
-		if err := processes.UpdateMessageProcessStatus(ctx, event.Message.ID, threads.UpdateMessageProcessStatusRequest{ProcessID: processID, Status: "processing"}); err != nil {
-			return err
+			d.warnNonFatalProcessError(scope, "create process", err)
+			processes = nil
+		} else {
+			if created.ID != "" {
+				processID = created.ID
+			}
+			if err := processes.UpdateMessageProcessStatus(ctx, event.Message.ID, threads.UpdateMessageProcessStatusRequest{ProcessID: processID, Status: "processing"}); err != nil {
+				d.warnNonFatalProcessError(scope, "update initial message process status", err)
+			}
 		}
 	}
 	runCtx, cancel := context.WithCancel(ctx)
@@ -222,6 +252,12 @@ func (d *Daemon) HandleEvent(ctx context.Context, scope config.Scope, sender Sen
 		_ = processes.UpdateMessageProcessStatus(context.WithoutCancel(ctx), event.Message.ID, threads.UpdateMessageProcessStatusRequest{ProcessID: processID, Status: "done"})
 	}
 	return nil
+}
+
+func (d *Daemon) warnNonFatalProcessError(scope config.Scope, operation string, err error) {
+	if err != nil && d.Logger != nil {
+		d.Logger.Warn("non-fatal process api error", "scope", scope.ID, "operation", operation, "error", err)
+	}
 }
 
 func runnerErrorMessage(err error) string {

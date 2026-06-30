@@ -19,6 +19,8 @@ import (
 	"nhooyr.io/websocket"
 )
 
+const maxWebSocketMessageBytes int64 = 16 * 1024 * 1024
+
 type Client struct {
 	BaseURL string
 	Token   string
@@ -55,6 +57,7 @@ func (c Client) Events(ctx context.Context, since string) (<-chan Event, <-chan 
 			errs <- err
 			return
 		}
+		conn.SetReadLimit(maxWebSocketMessageBytes)
 		defer conn.Close(websocket.StatusNormalClosure, "")
 		for {
 			_, data, err := conn.Read(ctx)
@@ -96,6 +99,7 @@ func (c Client) MaintainPresence(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	conn.SetReadLimit(maxWebSocketMessageBytes)
 	defer conn.Close(websocket.StatusNormalClosure, "")
 	for {
 		_, data, err := conn.Read(ctx)

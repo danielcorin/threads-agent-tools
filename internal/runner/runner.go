@@ -287,8 +287,11 @@ func parseStructuredOutput(out Output) Output {
 	return out
 }
 
+const maxRunnerLineBytes = 16 * 1024 * 1024
+
 func scanRunnerOutput(ctx context.Context, r io.Reader, dst *bytes.Buffer, onToolEvent ToolEventHandler) error {
 	s := bufio.NewScanner(r)
+	s.Buffer(make([]byte, 64*1024), maxRunnerLineBytes)
 	activeNames := map[string]string{}
 	for s.Scan() {
 		line := append([]byte(nil), s.Bytes()...)
@@ -506,6 +509,7 @@ func parseJSONLOutput(data []byte) parsedJSONLOutput {
 	var sawJSON bool
 	var lastError string
 	s := bufio.NewScanner(bytes.NewReader(data))
+	s.Buffer(make([]byte, 64*1024), maxRunnerLineBytes)
 	for s.Scan() {
 		line := bytes.TrimSpace(s.Bytes())
 		if len(line) == 0 {
