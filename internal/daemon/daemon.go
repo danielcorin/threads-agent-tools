@@ -195,7 +195,7 @@ func (d *Daemon) HandleEvent(ctx context.Context, scope config.Scope, sender Sen
 	d.trackProcess(processID, cancel)
 	defer d.untrackProcess(processID)
 
-	out, err := d.Runner.Run(runCtx, scope, runner.Input{ScopeID: scope.ID, Event: event, ThreadID: threadID, RunnerSessionID: runnerSessionID, NewSession: runnerSessionID == "", OnToolEvent: d.toolEventHandler(scope, sender, processes, processID, event, threadID)})
+	out, err := d.Runner.Run(runCtx, scope, runner.Input{ScopeID: scope.ID, Event: event, ThreadID: threadID, RunnerSessionID: runnerSessionID, NewSession: runnerSessionID == "", OnToolEvent: d.toolEventHandler(scope, sender, processes, processID, event, threadID), OnLimitEvent: d.limitEventHandler(scope, sender, processes, processID, event, threadID)})
 	if err != nil {
 		status := "error"
 		if runCtx.Err() != nil || ctx.Err() != nil {
@@ -270,6 +270,46 @@ func runnerErrorMessage(err error) string {
 		msg = msg[:maxLen] + "…"
 	}
 	return fmt.Sprintf("⚠️ Agent error: %s", msg)
+}
+
+func (d *Daemon) limitEventHandler(scope config.Scope, sender Sender, processes ProcessClient, processID string, event threads.Event, threadID string) runner.LimitEventHandler {
+	return func(ctx context.Context, limitEvent runner.LimitEvent) error {
+		if processes != nil {
+			_ = processes.RecordProcessActivity(context.WithoutCancel(ctx), processID, threads.ProcessActivityRequest{Type: "status"})
+		}
+		messageType := "progress"
+		if limitEvent.Severity == "error" {
+			messageType = "error"
+		}
+		metadata := map[string]any{
+			"source":     "threads-agent-bridge",
+			"kind":       "runner_limit",
+			"scope_id":   scope.ID,
+			"trigger_id": event.Message.ID,
+			"provider":   limitEvent.Source,
+			"severity":   limitEvent.Severity,
+			"process_id": processID,
+		}
+		for key, value := range limitEvent.Metadata {
+			metadata[key] = value
+		}
+		err := sender.SendMessage(ctx, event.ChannelID, threads.SendMessageRequest{Content: formatLimitEvent(limitEvent), ThreadID: threadID, MessageType: messageType, Metadata: metadata})
+		if err != nil && d.Logger != nil {
+			d.Logger.Warn("send limit event", "scope", scope.ID, "provider", limitEvent.Source, "error", err)
+		}
+		return err
+	}
+}
+
+func formatLimitEvent(event runner.LimitEvent) string {
+	prefix := "ℹ️"
+	switch event.Severity {
+	case "warning":
+		prefix = "⚠️"
+	case "error":
+		prefix = "🚫"
+	}
+	return strings.TrimSpace(prefix + " " + event.Message)
 }
 
 func (d *Daemon) toolEventHandler(scope config.Scope, sender Sender, processes ProcessClient, processID string, event threads.Event, threadID string) runner.ToolEventHandler {

@@ -76,7 +76,7 @@ threads react --message-id msg_456 --emoji "🚀"
 
 `threads react` reads `THREADS_BASE_URL`, `THREADS_API_TOKEN`, and `THREADS_MESSAGE_ID`; by default it reacts to the message that triggered the current run. Agents can react to any visible Threads message by passing `--message <id>` or `--message-id <id>`.
 
-Tool-call streaming and process lifecycle are bridge-owned. Agents do not need to know the Threads UI schema: Codex `command_execution` JSONL items, Claude Code `tool_use`/`tool_result` stream-json events, and Pi `tool_execution_*` JSON events are translated into hidden/intermediate Threads step messages by the daemon. The daemon also records `process.activity` counts for tool calls and replies so the Threads process list reflects local CLI work.
+Tool-call streaming and process lifecycle are bridge-owned. Agents do not need to know the Threads UI schema: Codex `command_execution` JSONL items, Claude Code `tool_use`/`tool_result` stream-json events, and Pi `tool_execution_*` JSON events are translated into hidden/intermediate Threads step messages by the daemon. Runner usage/limit signals are surfaced too: Codex `rate_limits` JSONL, Claude rate/usage-limit JSON events, and Pi provider usage/error messages become `runner_limit` status messages in the same Threads thread. The daemon also records `process.activity` counts for tool calls, runner status, and replies so the Threads process list reflects local CLI work.
 
 ## Bot token and config setup
 

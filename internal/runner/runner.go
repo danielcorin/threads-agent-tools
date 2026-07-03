@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -22,6 +23,7 @@ type Input struct {
 	RunnerSessionID string
 	NewSession      bool
 	OnToolEvent     ToolEventHandler
+	OnLimitEvent    LimitEventHandler
 }
 
 type Output struct {
@@ -53,6 +55,15 @@ type ToolEvent struct {
 
 type ToolEventHandler func(context.Context, ToolEvent) error
 
+type LimitEvent struct {
+	Source   string
+	Message  string
+	Severity string
+	Metadata map[string]any
+}
+
+type LimitEventHandler func(context.Context, LimitEvent) error
+
 type Runner interface {
 	Run(context.Context, config.Scope, Input) (Output, error)
 }
@@ -61,10 +72,12 @@ type LocalRunner struct{}
 
 func (LocalRunner) Run(ctx context.Context, scope config.Scope, input Input) (Output, error) {
 	args := buildArgs(scope, input.RunnerSessionID)
-	prompt := buildPrompt(scope, input)
+	prompt, handled := buildRunnerPrompt(scope, input)
+	if handled.UnsupportedMessage != "" {
+		return Output{Text: handled.UnsupportedMessage, RunnerSessionID: input.RunnerSessionID}, nil
+	}
 	if scope.Runner.Type == "pi" {
 		args = append(args, "--append-system-prompt", buildBridgeInstructions(scope, input))
-		prompt = buildUserPrompt(input)
 	}
 	cmd := exec.CommandContext(ctx, scope.Runner.Command, args...)
 	if scope.Runner.WorkingDir != "" {
@@ -81,7 +94,7 @@ func (LocalRunner) Run(ctx context.Context, scope config.Scope, input Input) (Ou
 	if err := cmd.Start(); err != nil {
 		return Output{}, err
 	}
-	scanErr := scanRunnerOutput(ctx, stdoutPipe, &stdout, input.OnToolEvent)
+	scanErr := scanRunnerOutput(ctx, stdoutPipe, &stdout, input.OnToolEvent, input.OnLimitEvent)
 	if err := cmd.Wait(); err != nil {
 		if stderr.Len() > 0 {
 			return Output{}, errWithStderr{err: err, stderr: stderr.String()}
@@ -181,8 +194,55 @@ func buildPiArgs(args []string, safety config.SafetyConfig, sessionID string) []
 	return args
 }
 
+type promptHandling struct {
+	UnsupportedMessage string
+}
+
+func buildRunnerPrompt(scope config.Scope, input Input) (string, promptHandling) {
+	if command, ok := nativeSlashCommand(input); ok {
+		switch scope.Runner.Type {
+		case "claude-code":
+			return command + "\n", promptHandling{}
+		case "pi":
+			return "", promptHandling{UnsupportedMessage: fmt.Sprintf("%s is not supported for Pi through the bridge's current `pi --print` runner path. Pi exposes native commands like compact through RPC mode, but this bridge scope is not using a persistent Pi RPC session yet.", commandName(command))}
+		default:
+			return "", promptHandling{UnsupportedMessage: fmt.Sprintf("%s is not supported for Codex through the bridge's current `codex exec` runner path. Codex exec treats slash commands as prompt text rather than native commands.", commandName(command))}
+		}
+	}
+	if scope.Runner.Type == "pi" {
+		return buildUserPrompt(input), promptHandling{}
+	}
+	return buildPrompt(scope, input), promptHandling{}
+}
+
 func buildPrompt(scope config.Scope, input Input) string {
 	return buildBridgeInstructions(scope, input) + "\n" + buildUserPrompt(input)
+}
+
+func nativeSlashCommand(input Input) (string, bool) {
+	if input.Event.Emoji != "" {
+		return "", false
+	}
+	content := strings.TrimSpace(input.Event.Message.Content)
+	if content == "" || !strings.HasPrefix(content, "/") || strings.ContainsAny(content, "\r\n") {
+		return "", false
+	}
+	name := commandName(content)
+	if len(name) < 2 {
+		return "", false
+	}
+	for _, r := range name[1:] {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			continue
+		}
+		return "", false
+	}
+	return content, true
+}
+
+func commandName(command string) string {
+	name, _, _ := strings.Cut(strings.TrimSpace(command), " ")
+	return name
 }
 
 func buildBridgeInstructions(scope config.Scope, input Input) string {
@@ -289,14 +349,28 @@ func parseStructuredOutput(out Output) Output {
 
 const maxRunnerLineBytes = 16 * 1024 * 1024
 
-func scanRunnerOutput(ctx context.Context, r io.Reader, dst *bytes.Buffer, onToolEvent ToolEventHandler) error {
+func scanRunnerOutput(ctx context.Context, r io.Reader, dst *bytes.Buffer, onToolEvent ToolEventHandler, onLimitEvent ...LimitEventHandler) error {
 	s := bufio.NewScanner(r)
 	s.Buffer(make([]byte, 64*1024), maxRunnerLineBytes)
 	activeNames := map[string]string{}
+	seenLimitEvents := map[string]bool{}
+	var limitHandler LimitEventHandler
+	if len(onLimitEvent) > 0 {
+		limitHandler = onLimitEvent[0]
+	}
 	for s.Scan() {
 		line := append([]byte(nil), s.Bytes()...)
 		dst.Write(line)
 		dst.WriteByte('\n')
+		if limitHandler != nil {
+			if event, ok := parseLimitEvent(line); ok {
+				signature := event.Source + "\x00" + event.Message
+				if !seenLimitEvents[signature] {
+					seenLimitEvents[signature] = true
+					_ = limitHandler(ctx, event)
+				}
+			}
+		}
 		if onToolEvent == nil {
 			continue
 		}
@@ -319,6 +393,132 @@ func scanRunnerOutput(ctx context.Context, r io.Reader, dst *bytes.Buffer, onToo
 		}
 	}
 	return s.Err()
+}
+
+func parseLimitEvent(line []byte) (LimitEvent, bool) {
+	line = bytes.TrimSpace(line)
+	if len(line) == 0 {
+		return LimitEvent{}, false
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(line, &obj); err != nil {
+		return LimitEvent{}, false
+	}
+	if event, ok := parseCodexLimitEvent(obj); ok {
+		return event, true
+	}
+	if event, ok := parsePiLimitEvent(obj); ok {
+		return event, true
+	}
+	if event, ok := parseClaudeLimitEvent(obj); ok {
+		return event, true
+	}
+	return LimitEvent{}, false
+}
+
+func parseCodexLimitEvent(obj map[string]any) (LimitEvent, bool) {
+	rateLimits, _ := obj["rate_limits"].(map[string]any)
+	payload, _ := obj["payload"].(map[string]any)
+	if rateLimits == nil && payload != nil {
+		rateLimits, _ = payload["rate_limits"].(map[string]any)
+	}
+	if rateLimits == nil {
+		return LimitEvent{}, false
+	}
+	primary := percentFromNested(rateLimits, "primary")
+	secondary := percentFromNested(rateLimits, "secondary")
+	reached := firstString(rateLimits, "rate_limit_reached_type", "reached_type")
+	if primary < 0 && secondary < 0 && reached == "" {
+		return LimitEvent{}, false
+	}
+	severity := "info"
+	if reached != "" || primary >= 100 || secondary >= 100 {
+		severity = "error"
+	} else if primary >= 90 || secondary >= 90 {
+		severity = "warning"
+	}
+	parts := []string{"Codex limits"}
+	if primary >= 0 {
+		parts = append(parts, fmt.Sprintf("primary %.0f%% used", primary))
+	}
+	if secondary >= 0 {
+		parts = append(parts, fmt.Sprintf("secondary %.0f%% used", secondary))
+	}
+	if reached != "" {
+		parts = append(parts, "reached "+reached)
+	}
+	return LimitEvent{Source: "codex", Message: strings.Join(parts, "; "), Severity: severity, Metadata: map[string]any{"rate_limits": rateLimits}}, true
+}
+
+func parsePiLimitEvent(obj map[string]any) (LimitEvent, bool) {
+	message, _ := obj["message"].(map[string]any)
+	if message == nil || firstString(message, "role") != "assistant" {
+		return LimitEvent{}, false
+	}
+	stopReason := firstString(message, "stopReason", "stop_reason")
+	errorMessage := firstString(message, "errorMessage", "error_message", "error")
+	usage, _ := message["usage"].(map[string]any)
+	if stopReason == "error" && errorMessage != "" {
+		return LimitEvent{Source: "pi", Message: "Pi provider error: " + errorMessage, Severity: "error", Metadata: map[string]any{"stop_reason": stopReason, "usage": usage}}, true
+	}
+	if usage == nil {
+		return LimitEvent{}, false
+	}
+	provider := firstString(message, "provider")
+	model := firstString(message, "model")
+	tokens := numberFromAny(usage["totalTokens"])
+	if tokens < 0 {
+		tokens = numberFromAny(usage["total_tokens"])
+	}
+	if tokens < 0 {
+		return LimitEvent{}, false
+	}
+	label := "Pi usage"
+	if provider != "" || model != "" {
+		label += " (" + strings.TrimSpace(provider+" "+model) + ")"
+	}
+	return LimitEvent{Source: "pi", Message: fmt.Sprintf("%s: %.0f tokens", label, tokens), Severity: "info", Metadata: map[string]any{"usage": usage, "provider": provider, "model": model}}, true
+}
+
+func parseClaudeLimitEvent(obj map[string]any) (LimitEvent, bool) {
+	typeName := firstString(obj, "type")
+	if strings.Contains(typeName, "rate_limit") || strings.Contains(typeName, "usage_limit") {
+		msg := firstString(obj, "message", "error", "errorMessage", "error_message")
+		if msg == "" {
+			msg = "Claude limit event: " + typeName
+		}
+		return LimitEvent{Source: "claude-code", Message: msg, Severity: "warning", Metadata: obj}, true
+	}
+	if typeName == "error" {
+		msg := firstString(obj, "message", "error", "errorMessage", "error_message")
+		if strings.Contains(strings.ToLower(msg), "limit") || strings.Contains(strings.ToLower(msg), "quota") || strings.Contains(strings.ToLower(msg), "rate") {
+			return LimitEvent{Source: "claude-code", Message: "Claude error: " + msg, Severity: "error", Metadata: obj}, true
+		}
+	}
+	return LimitEvent{}, false
+}
+
+func percentFromNested(obj map[string]any, key string) float64 {
+	nested, _ := obj[key].(map[string]any)
+	if nested == nil {
+		return -1
+	}
+	return numberFromAny(nested["used_percent"])
+}
+
+func numberFromAny(value any) float64 {
+	switch v := value.(type) {
+	case float64:
+		return v
+	case int:
+		return float64(v)
+	case json.Number:
+		n, err := v.Float64()
+		if err == nil {
+			return n
+		}
+	}
+	return -1
 }
 
 func parseToolEvent(line []byte) (ToolEvent, bool) {

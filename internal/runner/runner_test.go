@@ -88,6 +88,77 @@ func TestScanRunnerOutputFillsClaudeToolResultName(t *testing.T) {
 	}
 }
 
+func TestParseLimitEventsFromCodexJSON(t *testing.T) {
+	event, ok := parseLimitEvent([]byte(`{"type":"token_count","rate_limits":{"primary":{"used_percent":94,"resets_at":1777830669},"secondary":{"used_percent":15},"plan_type":"pro"}}`))
+	if !ok || event.Source != "codex" || event.Severity != "warning" || !strings.Contains(event.Message, "primary 94% used") {
+		t.Fatalf("bad codex limit event: ok=%v event=%+v", ok, event)
+	}
+}
+
+func TestParseLimitEventsFromPiJSON(t *testing.T) {
+	event, ok := parseLimitEvent([]byte(`{"type":"message","message":{"role":"assistant","provider":"openrouter","model":"gpt-5.1-codex","usage":{"totalTokens":0},"stopReason":"error","errorMessage":"429 Usage limit reached for 5 hour"}}`))
+	if !ok || event.Source != "pi" || event.Severity != "error" || !strings.Contains(event.Message, "429 Usage limit reached") {
+		t.Fatalf("bad pi limit event: ok=%v event=%+v", ok, event)
+	}
+}
+
+func TestParseLimitEventsFromClaudeJSON(t *testing.T) {
+	event, ok := parseLimitEvent([]byte(`{"type":"rate_limit_event","message":"Claude usage limit reached; resets at 5pm"}`))
+	if !ok || event.Source != "claude-code" || event.Severity != "warning" || !strings.Contains(event.Message, "usage limit") {
+		t.Fatalf("bad claude limit event: ok=%v event=%+v", ok, event)
+	}
+}
+
+func TestScanRunnerOutputEmitsDedupedLimitEvents(t *testing.T) {
+	input := strings.NewReader(`{"type":"token_count","rate_limits":{"primary":{"used_percent":94},"secondary":{"used_percent":15}}}
+{"type":"token_count","rate_limits":{"primary":{"used_percent":94},"secondary":{"used_percent":15}}}
+`)
+	var got []LimitEvent
+	var buf bytes.Buffer
+	err := scanRunnerOutput(context.Background(), input, &buf, nil, func(ctx context.Context, event LimitEvent) error {
+		got = append(got, event)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Source != "codex" {
+		t.Fatalf("bad limit events: %+v", got)
+	}
+}
+
+func TestScanRunnerOutputEmitsLimitEventsForSupportedRunners(t *testing.T) {
+	input := strings.NewReader(`{"type":"rate_limit_event","message":"Claude usage limit reached; resets at 5pm"}
+{"type":"token_count","rate_limits":{"primary":{"used_percent":100},"rate_limit_reached_type":"primary"}}
+{"type":"message","message":{"role":"assistant","provider":"openrouter","model":"gpt-5.1-codex","usage":{"totalTokens":0},"stopReason":"error","errorMessage":"429 Usage limit reached for 5 hour"}}
+`)
+	var got []LimitEvent
+	var buf bytes.Buffer
+	err := scanRunnerOutput(context.Background(), input, &buf, nil, func(ctx context.Context, event LimitEvent) error {
+		got = append(got, event)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []struct {
+		source   string
+		severity string
+	}{
+		{source: "claude-code", severity: "warning"},
+		{source: "codex", severity: "error"},
+		{source: "pi", severity: "error"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d limit events: %+v", len(got), got)
+	}
+	for i := range want {
+		if got[i].Source != want[i].source || got[i].Severity != want[i].severity || got[i].Message == "" {
+			t.Fatalf("event %d = %+v, want source=%s severity=%s", i, got[i], want[i].source, want[i].severity)
+		}
+	}
+}
+
 func TestParseToolEventsFromCodexJSON(t *testing.T) {
 	started, ok := parseToolEvent([]byte(`{"type":"item.started","item":{"type":"command_execution","id":"item_0","command":"/bin/zsh -lc pwd","status":"in_progress"}}`))
 	if !ok || started.ID != "item_0" || started.Name != "shell" || started.Status != ToolEventStarted || started.Input != "/bin/zsh -lc pwd" {
@@ -203,6 +274,32 @@ func TestBuildPromptDocumentsThreadsSendAsInterimOnly(t *testing.T) {
 	prompt := buildPrompt(config.Scope{}, Input{Event: threads.Event{Message: threads.Message{Content: "ship it"}}})
 	if !strings.Contains(prompt, "threads send --content") || !strings.Contains(prompt, "threads react") || !strings.Contains(prompt, "still write your final answer to stdout") || !strings.Contains(prompt, "ship it") {
 		t.Fatalf("prompt missing CLI contract: %q", prompt)
+	}
+}
+
+func TestBuildRunnerPromptPassesClaudeSlashCommandRaw(t *testing.T) {
+	scope := config.Scope{Runner: config.RunnerConfig{Type: "claude-code"}}
+	prompt, handling := buildRunnerPrompt(scope, Input{Event: threads.Event{Message: threads.Message{Content: " /compact "}}})
+	if handling.UnsupportedMessage != "" || prompt != "/compact\n" {
+		t.Fatalf("got prompt %q handling %+v", prompt, handling)
+	}
+}
+
+func TestBuildRunnerPromptRejectsUnsupportedSlashCommands(t *testing.T) {
+	input := Input{Event: threads.Event{Message: threads.Message{Content: "/compact"}}}
+	for _, runnerType := range []string{"codex", "pi"} {
+		prompt, handling := buildRunnerPrompt(config.Scope{Runner: config.RunnerConfig{Type: runnerType}}, input)
+		if prompt != "" || !strings.Contains(handling.UnsupportedMessage, "/compact is not supported") {
+			t.Fatalf("%s got prompt %q handling %+v", runnerType, prompt, handling)
+		}
+	}
+}
+
+func TestBuildRunnerPromptDoesNotTreatMultilineSlashAsNativeCommand(t *testing.T) {
+	scope := config.Scope{Runner: config.RunnerConfig{Type: "claude-code"}}
+	prompt, handling := buildRunnerPrompt(scope, Input{Event: threads.Event{Message: threads.Message{Content: "/compact\nplease explain"}}})
+	if handling.UnsupportedMessage != "" || !strings.Contains(prompt, "User message:\n/compact\nplease explain") {
+		t.Fatalf("got prompt %q handling %+v", prompt, handling)
 	}
 }
 

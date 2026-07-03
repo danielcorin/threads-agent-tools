@@ -160,6 +160,15 @@ func (errorRunner) Run(ctx context.Context, scope config.Scope, in runner.Input)
 	return runner.Output{}, errors.New("OpenRouter error: 402 insufficient credits")
 }
 
+type limitEventRunner struct{}
+
+func (limitEventRunner) Run(ctx context.Context, scope config.Scope, in runner.Input) (runner.Output, error) {
+	if in.OnLimitEvent != nil {
+		_ = in.OnLimitEvent(ctx, runner.LimitEvent{Source: "codex", Severity: "warning", Message: "Codex limits; primary 94% used", Metadata: map[string]any{"rate_limits": map[string]any{"primary": map[string]any{"used_percent": 94}}}})
+	}
+	return runner.Output{Text: "done", RunnerSessionID: "runner-s1"}, nil
+}
+
 type callbackRunner struct {
 	onRun func()
 }
@@ -423,6 +432,27 @@ func TestHandleEventSurfacesRunnerErrorsInThreads(t *testing.T) {
 	}
 	if len(s.messageStatuses) == 0 || s.messageStatuses[len(s.messageStatuses)-1].Status != "error" || !strings.Contains(s.messageStatuses[len(s.messageStatuses)-1].ErrorText, "OpenRouter error") {
 		t.Fatalf("bad message status: %+v", s.messageStatuses)
+	}
+}
+
+func TestHandleEventStreamsLimitEventsAsStatusMessages(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	s := &fakeSender{}
+	d := Daemon{Store: st, Runner: limitEventRunner{}}
+	scope := matchAllScope("s1")
+	event := threads.Event{ID: "e1", Type: "message.created", ChannelID: "c1", Message: threads.Message{ID: "m1", Content: "hi"}}
+	if err := d.HandleEvent(context.Background(), scope, s, s, event); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.sent) != 2 {
+		t.Fatalf("sent=%d %+v", len(s.sent), s.sent)
+	}
+	if s.sent[0].MessageType != "progress" || s.sent[0].Metadata["kind"] != "runner_limit" || s.sent[0].Metadata["provider"] != "codex" || !strings.Contains(s.sent[0].Content, "94% used") {
+		t.Fatalf("bad limit message: %+v", s.sent[0])
 	}
 }
 
