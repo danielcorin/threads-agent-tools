@@ -76,25 +76,22 @@ Release assets include `README.md`, `LICENSE`, `config.example.json`, and `check
 
 ## Running as a macOS LaunchAgent
 
-The local bridge is intended to run continuously as a user LaunchAgent in development. The current local service uses:
+The bridge can run continuously as a user LaunchAgent. Keep the plist, config, secrets, and logs local to the machine that owns the bot tokens. A typical setup uses:
 
-- Label: `com.danielcorin.threads-agent-bridge`
-- Plist: `~/Library/LaunchAgents/com.danielcorin.threads-agent-bridge.plist`
-- Working directory: `~/dev/threads-agent-bridge`
-- Command: `bin/threads-agent-bridge -config config.local.json`
-- Env files sourced before launch: `.secrets/codex.env`, `.secrets/claude-code.env`, and optionally `.secrets/pi.env`
-- Logs: `logs/bridge.log` and `logs/bridge.err.log` (`logs/` is gitignored)
+- A LaunchAgent label such as `com.example.threads-agent-bridge`
+- A working directory containing `bin/threads-agent-bridge`, `config.local.json`, `.secrets/*.env`, and `logs/`
+- A command such as `bin/threads-agent-bridge -config config.local.json`
 
 Useful commands:
 
 ```bash
-launchctl print gui/$UID/com.danielcorin.threads-agent-bridge
-launchctl kickstart -k gui/$UID/com.danielcorin.threads-agent-bridge
-launchctl bootout gui/$UID ~/Library/LaunchAgents/com.danielcorin.threads-agent-bridge.plist
-launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.danielcorin.threads-agent-bridge.plist
+launchctl print gui/$UID/com.example.threads-agent-bridge
+launchctl kickstart -k gui/$UID/com.example.threads-agent-bridge
+launchctl bootout gui/$UID ~/Library/LaunchAgents/com.example.threads-agent-bridge.plist
+launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.example.threads-agent-bridge.plist
 ```
 
-If the bridge appears unresponsive, first check that the LaunchAgent exists and that a `threads-agent-bridge` process is running, then inspect `logs/bridge.err.log`.
+If the bridge appears unresponsive, first check that the LaunchAgent exists and that a `threads-agent-bridge` process is running, then inspect your local bridge logs.
 
 ## Agent-facing Threads CLI
 
@@ -122,38 +119,9 @@ Tool-call streaming and process lifecycle are bridge-owned. Agents do not need t
 
 The bridge should run each routed bot with that bot user's Threads API token. Keep tokens out of git: `config.local.json`, `.secrets/*.env`, `threads-agent-bridge.db`, and `logs/` are local-only files.
 
-1. Load the Threads admin credentials from the local Threads checkout:
+1. Create or obtain a Threads bot user and mint an API token for that bot through your Threads workspace/admin tooling.
 
-   ```bash
-   export THREADS_TOKEN=$(grep THREADS_API_TOKEN ~/dev/tela/.env | cut -d= -f2)
-   set -a && source ~/dev/filae/local.env && set +a
-   ```
-
-   `THREADS_TOKEN` authenticates the admin CLI user; `THREADS_ADMIN_KEY` from `local.env` authorizes `admin *` commands.
-
-2. Find or create the bot user. If the bot user already exists, use its id. To create one:
-
-   ```bash
-   BOT_USER_ID=$(bun /Users/dancorin/dev/threads/cli.ts admin create-user \
-     --username codex \
-     --display-name "Codex" \
-     --password "$(openssl rand -base64 32)" \
-     | jq -r .id)
-
-   bun /Users/dancorin/dev/threads/cli.ts admin sql \
-     --sql "UPDATE users SET role = 'bot' WHERE id = '$BOT_USER_ID'"
-   ```
-
-3. Mint a token for that bot user:
-
-   ```bash
-   BOT_TOKEN=$(bun /Users/dancorin/dev/threads/cli.ts admin create-api-token \
-     --user-id "$BOT_USER_ID" \
-     --name "threads-agent-bridge-codex-$(date +%Y-%m-%d)" \
-     | jq -r .token)
-   ```
-
-4. Store the token in a local env file that the LaunchAgent sources:
+2. Store the token in a local env file that the LaunchAgent or shell sources:
 
    ```bash
    mkdir -p .secrets
@@ -162,7 +130,7 @@ The bridge should run each routed bot with that bot user's Threads API token. Ke
 
    Use one env var per routed bot, for example `THREADS_CODEX_TOKEN`, `THREADS_CLAUDE_CODE_TOKEN`, and `THREADS_PI_TOKEN`.
 
-5. Copy the example config and wire the env var and bot user id into the matching scope:
+3. Copy the example config and wire the env var and bot user id into the matching scope:
 
    ```bash
    cp config.example.json config.local.json
@@ -174,25 +142,20 @@ The bridge should run each routed bot with that bot user's Threads API token. Ke
    ```json
    {
      "threads": {
-       "base_url": "https://threads-api.filae.site",
+       "base_url": "https://api.threads.space",
        "token_env": "THREADS_CODEX_TOKEN",
        "user_id": "<bot-user-id>"
      },
      "match": {
-       "channel_ids": ["*"],
+       "channel_ids": ["<channel-id>"],
        "thread_ids": ["*"]
      }
    }
    ```
 
-   Prefer `token_env` over an inline `token` so the secret stays in `.secrets/*.env`. `user_id` must be the same bot user that owns the token; the bridge uses it for presence and process attribution. `match` arrays are deny-by-default: use `"*"` to accept all delivered channels/threads, or list only the channel/root thread ids that should be passed to that scope.
+   Prefer `token_env` over an inline `token` so the secret stays in `.secrets/*.env`. `user_id` must be the same bot user that owns the token; the bridge uses it for presence and process attribution. `match` arrays are deny-by-default: list only channels/root threads that should be passed to that scope. Use `"*"` only when the bot is intentionally allowed to process every delivered channel/thread.
 
-6. Restart the LaunchAgent after changing config or secrets:
-
-   ```bash
-   launchctl kickstart -k gui/$UID/com.danielcorin.threads-agent-bridge
-   tail -f logs/bridge.err.log
-   ```
+4. Restart the LaunchAgent or bridge process after changing config or secrets, then inspect your local logs for startup errors.
 
 ## Config
 
