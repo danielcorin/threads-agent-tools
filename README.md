@@ -142,7 +142,7 @@ The bridge should run each routed bot with that bot user's Threads API token. Ke
    ```json
    {
      "threads": {
-       "base_url": "https://api.threads.space",
+       "base_url": "https://<org>.threads.space",
        "token_env": "THREADS_CODEX_TOKEN",
        "user_id": "<bot-user-id>"
      },
