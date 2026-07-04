@@ -1,0 +1,74 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to package, e.g. v0.1.2
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+          cache: true
+      - name: Test
+        run: go test ./...
+      - name: Build release assets
+        env:
+          VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+        run: scripts/build-release.sh "$VERSION"
+      - name: Smoke test packaged Linux artifact
+        env:
+          VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+        run: |
+          tmp=$(mktemp -d)
+          tar -xzf "dist/threads-agent-bridge_${VERSION}_linux_amd64.tar.gz" -C "$tmp"
+          "$tmp/threads-agent-bridge_${VERSION}_linux_amd64/threads-agent-bridge" -h
+          "$tmp/threads-agent-bridge_${VERSION}_linux_amd64/threads" -h
+      - name: Publish GitHub release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          notes_file="dist/RELEASE_NOTES_${VERSION}.md"
+          if [ ! -s "$notes_file" ]; then
+            previous=$(git describe --tags --abbrev=0 "${VERSION}^" 2>/dev/null || true)
+            {
+              echo "# threads-agent-bridge ${VERSION}"
+              echo
+              echo "## Changes"
+              if [ -n "$previous" ]; then
+                git log --pretty='- %s' "${previous}..${VERSION}"
+              else
+                git log --pretty='- %s' "${VERSION}"
+              fi
+              echo
+              echo "## Downloads"
+              echo "- darwin/arm64"
+              echo "- darwin/amd64"
+              echo "- linux/amd64"
+              echo "- linux/arm64"
+              echo
+              echo "Users must provide their own Threads bot token and local agent CLI credentials."
+            } > "$notes_file"
+          fi
+          gh release create "$VERSION" \
+            dist/threads-agent-bridge_${VERSION}_*.tar.gz \
+            dist/checksums.txt \
+            --title "threads-agent-bridge ${VERSION}" \
+            --notes-file "$notes_file"

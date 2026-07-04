@@ -1,5 +1,10 @@
 # Threads Agent Bridge
 
+[![CI](https://github.com/filaebot/threads-agent-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/filaebot/threads-agent-bridge/actions/workflows/ci.yml)
+[![Release](https://github.com/filaebot/threads-agent-bridge/actions/workflows/release.yml/badge.svg)](https://github.com/filaebot/threads-agent-bridge/actions/workflows/release.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/danielcorin/threads-agent-bridge.svg)](https://pkg.go.dev/github.com/danielcorin/threads-agent-bridge)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+
 Local single-binary daemon that connects Threads owner-scoped events to local agent CLIs (Codex, Claude Code, and Pi headless), plus a narrow agent-facing `threads` CLI for emitting Threads messages during a run.
 
 ## v0 shape
@@ -21,18 +26,53 @@ Local single-binary daemon that connects Threads owner-scoped events to local ag
 
 ## Quick start
 
+Download a release archive for your OS/arch from [GitHub Releases](https://github.com/filaebot/threads-agent-bridge/releases), or run from source:
+
 ```bash
 cp config.example.json config.json
 # edit token env vars / bot user ids / runner args
 go run ./cmd/threads-agent-bridge -config config.json
 ```
 
-Build the binaries:
+Build the binaries locally:
 
 ```bash
 go build -o bin/threads-agent-bridge ./cmd/threads-agent-bridge
 go build -o bin/threads ./cmd/threads
 ```
+
+## Development
+
+```bash
+go test ./...
+go vet ./...
+```
+
+CI runs formatting checks, `go vet`, `go test ./...`, and binary builds on every pull request and push to `main`.
+
+## Releases
+
+Release archives are produced by GitHub Actions when a semantic version tag is pushed:
+
+```bash
+git tag v0.1.2
+git push origin v0.1.2
+```
+
+The release workflow builds `threads-agent-bridge` and `threads` for:
+
+- `darwin/arm64`
+- `darwin/amd64`
+- `linux/amd64`
+- `linux/arm64`
+
+To build the same archive set locally, run:
+
+```bash
+scripts/build-release.sh v0.1.2
+```
+
+Release assets include `README.md`, `LICENSE`, `config.example.json`, and `checksums.txt`. Users must provide their own Threads bot token and local agent CLI credentials.
 
 ## Running as a macOS LaunchAgent
 
