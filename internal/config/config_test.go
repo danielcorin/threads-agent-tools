@@ -85,3 +85,31 @@ func TestLoadPiDefaults(t *testing.T) {
 		t.Fatalf("pi defaults not applied: %+v", cfg.Scopes[0].Runner)
 	}
 }
+
+func TestLoadAutoTitleRequiresStructuredOutput(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{
+		"scopes":[{"id":"s1","threads":{"base_url":"https://threads","token":"secret"},"runner":{"auto_title":true}}]
+	}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected auto_title configuration error")
+	}
+}
+
+func TestLoadAutoTitleWithStructuredOutput(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{
+		"scopes":[{"id":"s1","threads":{"base_url":"https://threads","token":"secret"},"runner":{"structured":true,"auto_title":true}}]
+	}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Scopes[0].Runner.AutoTitle {
+		t.Fatalf("auto_title not loaded: %+v", cfg.Scopes[0].Runner)
+	}
+}

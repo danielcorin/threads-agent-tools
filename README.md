@@ -20,6 +20,7 @@ Local single-binary daemon that connects Threads owner-scoped events to local ag
 - Pi runs through `pi --mode json --print`, captures the emitted `sessionFile`, and resumes replies with `--session <sessionFile>`. Pi JSON `tool_execution_*` events stream into the same Threads tool-call UI.
 - Runner subprocesses receive `THREADS_BASE_URL`, `THREADS_API_TOKEN`, `THREADS_CHANNEL_ID`, `THREADS_THREAD_ID`, `THREADS_MESSAGE_ID`, `THREADS_SCOPE_ID`, and `THREADS_RUNNER_SESSION_ID` so they can call the companion `threads` CLI.
 - `threads send` posts immediate side-effect/interim messages and can attach files/images through Threads uploads. Final answers remain stdout from the runner; the bridge posts that stdout once the runner exits.
+- With `runner.auto_title: true` and structured output enabled, the first root-message inference can return `thread_title`; the bridge applies it with guarded set-if-empty semantics so it cannot overwrite an existing human title.
 - The daemon creates a Threads process as soon as a run starts, marks the triggering message `processing`, and updates the process/message to `done`, `error`, or `killed` when the run exits.
 - Clicking the `x` in the Threads tool-call/process UI sends a process kill event; the bridge maps that process id to the active local subprocess context and cancels/kills the Codex, Claude Code, or Pi loop.
 - The daemon streams Codex/Claude Code/Pi tool-call events from JSONL stdout into Threads step rows (`progress` on start, `tool_output` on completion) with `metadata.trigger_id` set to the user message that triggered the run, so the existing Threads tool-call rail attaches to that message as calls occur.
@@ -107,11 +108,16 @@ threads send --attachment-ids att_123,att_456
 threads react --emoji "✅"
 threads react --message msg_123 --emoji "👀"
 threads react --message-id msg_456 --emoji "🚀"
+threads title --title "Investigate WebSocket reconnects"
+threads title --message-id msg_456 --title "Release v2 follow-ups"
+threads title --title "Generated first title" --if-unset
 ```
 
 `threads send` reads defaults from `THREADS_BASE_URL`, `THREADS_API_TOKEN`, `THREADS_CHANNEL_ID`, and `THREADS_THREAD_ID`, which the bridge injects into runner subprocesses. For top-level messages, `THREADS_THREAD_ID` is normalized to the root message id so interim and final responses land in the same Threads thread. The command defaults to `message_type: "agent_update"` and metadata `{source:"threads-cli", kind:"interim"}`. `--file` and `--image` may be repeated; each path is uploaded to `POST /uploads`, then the returned attachment IDs are included when posting the message. `--attachment-ids` can reuse already-uploaded IDs, and attachment-only messages are allowed. The agent should still write its final answer to stdout; the daemon posts stdout as the final `response` message.
 
 `threads react` reads `THREADS_BASE_URL`, `THREADS_API_TOKEN`, and `THREADS_MESSAGE_ID`; by default it reacts to the message that triggered the current run. Agents can react to any visible Threads message by passing `--message <id>` or `--message-id <id>`.
+
+`threads title` reads `THREADS_BASE_URL`, `THREADS_API_TOKEN`, and `THREADS_THREAD_ID`; by default it targets the normalized root message for the current run. Pass `--message` or `--message-id` to target another root or reply. `--if-unset` makes the update safe for automatic titles by preserving any existing title.
 
 Tool-call streaming and process lifecycle are bridge-owned. Agents do not need to know the Threads UI schema: Codex `command_execution` JSONL items, Claude Code `tool_use`/`tool_result` stream-json events, and Pi `tool_execution_*` JSON events are translated into hidden/intermediate Threads step messages by the daemon. Runner usage/limit signals are surfaced too: Codex `rate_limits` JSONL, Claude rate/usage-limit JSON events, and Pi provider usage/error messages become `runner_limit` status messages in the same Threads thread. The daemon also records `process.activity` counts for tool calls, runner status, and replies so the Threads process list reflects local CLI work.
 
@@ -166,7 +172,7 @@ Each scope has:
 - `id`: stable local scope id.
 - `threads`: API base URL, token env var or token, and optional `since` override.
 - `match`: local channel/thread allowlists. Empty or omitted `channel_ids` and `thread_ids` match no events. Use `"*"` in an array to accept all delivered values for that dimension; otherwise list only the channel ids and/or root thread ids that should be passed to that scope. For example, `channel_ids: ["c1"]` plus `thread_ids: ["*"]` means every delivered thread in channel `c1`. Reaction events use the same channel/thread allowlists, but do not have per-emoji routing: any emoji on a message whose `senderId` matches the scope's `threads.user_id` invokes that same scope.
-- `runner`: local tool command/args. v0 defaults to Codex-style stdin prompt and JSONL/stdout parsing; set `type: "claude-code"` for Claude Code stream-json parsing or `type: "pi"` for Pi JSON print mode. Set `structured: true` to let the final stdout be a JSON object such as `{ "content": "Done", "reactions": [{ "message_id": "msg_123", "emoji": "✅" }] }`; the bridge posts `content` and applies the requested reactions. Plain-text final output still works in structured mode.
+- `runner`: local tool command/args. v0 defaults to Codex-style stdin prompt and JSONL/stdout parsing; set `type: "claude-code"` for Claude Code stream-json parsing or `type: "pi"` for Pi JSON print mode. Set `structured: true` to let the final stdout be a JSON object such as `{ "content": "Done", "reactions": [{ "message_id": "msg_123", "emoji": "✅" }] }`; the bridge posts `content` and applies the requested reactions. Plain-text final output still works in structured mode. Set `auto_title: true` alongside `structured: true` to require a `thread_title` field on the first newly created root message; title generation is best-effort and never blocks the final response.
 - `safety`: user-owned mode values translated by the runner argv builder. Codex supports `read-only`, `workspace-write`, `danger-full-access`, `auto`, or `yolo`; `auto` maps to workspace-write, no approval prompts, and workspace-write network access. Claude Code maps `read-only` to plan mode, `workspace-write` to acceptEdits, `auto` to `--permission-mode auto`, and `yolo` to skipped permissions. Pi maps `read-only` to `--tools read,grep,find,ls` unless `allowed_tools` is set; `allowed_tools` maps to Pi `--tools` and Claude Code `--allowedTools` for their respective scopes.
 
 ## Event contract assumed

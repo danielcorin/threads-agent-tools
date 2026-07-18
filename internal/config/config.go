@@ -40,6 +40,8 @@ type RunnerConfig struct {
 	WorkingDir string   `json:"working_dir"`
 	// Structured enables JSON final-output handling: {"content":"...","reactions":[{"message_id":"...","emoji":"👍"}]}.
 	Structured bool `json:"structured"`
+	// AutoTitle asks the first root-message inference for a title and requires structured output.
+	AutoTitle bool `json:"auto_title"`
 }
 
 type SafetyConfig struct {
@@ -71,6 +73,9 @@ func Load(path string) (Config, error) {
 		}
 		if cfg.Scopes[i].Runner.Type == "" {
 			cfg.Scopes[i].Runner.Type = "codex"
+		}
+		if cfg.Scopes[i].Runner.AutoTitle && !cfg.Scopes[i].Runner.Structured {
+			return Config{}, fmt.Errorf("scope %q runner.auto_title requires runner.structured", cfg.Scopes[i].ID)
 		}
 		switch cfg.Scopes[i].Runner.Type {
 		case "claude-code":

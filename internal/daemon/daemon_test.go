@@ -31,6 +31,8 @@ func (f *fakeRunner) Run(ctx context.Context, scope config.Scope, in runner.Inpu
 
 type fakeSender struct {
 	sent             []threads.SendMessageRequest
+	titleMessageIDs  []string
+	titles           []threads.SetThreadTitleRequest
 	created          []threads.CreateProcessRequest
 	updated          []threads.UpdateProcessRequest
 	activities       []threads.ProcessActivityRequest
@@ -38,6 +40,7 @@ type fakeSender struct {
 	reactions        []runner.Reaction
 	createProcessErr error
 	messageStatusErr error
+	titleErr         error
 }
 
 func (f *fakeSender) SendMessage(ctx context.Context, channelID string, req threads.SendMessageRequest) error {
@@ -48,6 +51,15 @@ func (f *fakeSender) SendMessage(ctx context.Context, channelID string, req thre
 func (f *fakeSender) AddReaction(ctx context.Context, messageID, emoji string) error {
 	f.reactions = append(f.reactions, runner.Reaction{MessageID: messageID, Emoji: emoji})
 	return nil
+}
+
+func (f *fakeSender) SetThreadTitle(ctx context.Context, messageID string, req threads.SetThreadTitleRequest) (threads.SetThreadTitleResponse, error) {
+	f.titleMessageIDs = append(f.titleMessageIDs, messageID)
+	f.titles = append(f.titles, req)
+	if f.titleErr != nil {
+		return threads.SetThreadTitleResponse{}, f.titleErr
+	}
+	return threads.SetThreadTitleResponse{OK: true, Applied: true, ThreadID: messageID, ThreadTitle: req.Title, ThreadTitleUpdatedAt: 123}, nil
 }
 
 func (f *fakeSender) CreateProcess(ctx context.Context, req threads.CreateProcessRequest) (threads.CreateProcessResponse, error) {
@@ -142,6 +154,14 @@ type structuredRunner struct{}
 
 func (structuredRunner) Run(ctx context.Context, scope config.Scope, in runner.Input) (runner.Output, error) {
 	return runner.Output{Text: "done", RunnerSessionID: "runner-s1", Reactions: []runner.Reaction{{MessageID: in.Event.Message.ID, Emoji: "✅"}}}, nil
+}
+
+type generatedTitleRunner struct {
+	title string
+}
+
+func (r generatedTitleRunner) Run(ctx context.Context, scope config.Scope, in runner.Input) (runner.Output, error) {
+	return runner.Output{Text: "done", RunnerSessionID: "runner-s1", ThreadTitle: r.title}, nil
 }
 
 type toolEventRunner struct{}
@@ -373,6 +393,67 @@ func TestHandleEventAppliesStructuredReactions(t *testing.T) {
 	}
 }
 
+func TestHandleEventSetsGeneratedTitleForNewRoot(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	s := &fakeSender{}
+	d := Daemon{Store: st, Runner: generatedTitleRunner{title: "  Investigate   reconnects  "}}
+	scope := matchAllScope("s1")
+	scope.Runner.AutoTitle = true
+	event := threads.Event{ID: "e1", Type: "message.created", ChannelID: "c1", Message: threads.Message{ID: "m1", Content: "hi"}}
+	if err := d.HandleEvent(context.Background(), scope, s, s, event); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.titles) != 1 || len(s.titleMessageIDs) != 1 || s.titleMessageIDs[0] != "m1" || s.titles[0].Title != "Investigate reconnects" || !s.titles[0].IfUnset {
+		t.Fatalf("bad title requests ids=%v requests=%+v", s.titleMessageIDs, s.titles)
+	}
+	if len(s.sent) != 1 || s.sent[0].Content != "done" {
+		t.Fatalf("bad final message: %+v", s.sent)
+	}
+}
+
+func TestHandleEventTitleFailureDoesNotBlockFinalResponse(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	s := &fakeSender{titleErr: errors.New("title endpoint unavailable")}
+	d := Daemon{Store: st, Runner: generatedTitleRunner{title: "Investigate reconnects"}}
+	scope := matchAllScope("s1")
+	scope.Runner.AutoTitle = true
+	event := threads.Event{ID: "e1", Type: "message.created", ChannelID: "c1", Message: threads.Message{ID: "m1", Content: "hi"}}
+	if err := d.HandleEvent(context.Background(), scope, s, s, event); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.titles) != 1 || len(s.sent) != 1 || s.sent[0].Content != "done" {
+		t.Fatalf("title failure changed final response: titles=%+v sent=%+v", s.titles, s.sent)
+	}
+}
+
+func TestHandleEventDoesNotGenerateTitleForInvocation(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	r := &fakeRunner{}
+	s := &fakeSender{}
+	d := Daemon{Store: st, Runner: r}
+	scope := matchAllScope("s1")
+	scope.Runner.AutoTitle = true
+	event := threads.Event{ID: "e1", Type: "message.invoked", ChannelID: "c1", Message: threads.Message{ID: "m1", Content: "retry"}}
+	if err := d.HandleEvent(context.Background(), scope, s, s, event); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.inputs) != 1 || r.inputs[0].GenerateThreadTitle || len(s.titles) != 0 {
+		t.Fatalf("invocation generated title: input=%+v titles=%+v", r.inputs, s.titles)
+	}
+}
+
 func TestHandleEventDoesNotFailWhenMessageProcessStatusEndpointIsMissing(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -499,6 +580,7 @@ func TestHandleEventMapsTopLevelMessageToThreadSessionAndRepliesResume(t *testin
 	s := &fakeSender{}
 	d := Daemon{Store: st, Runner: r}
 	scope := matchAllScope("s1")
+	scope.Runner.AutoTitle = true
 
 	root := threads.Event{ID: "e-root", Type: "message.created", ChannelID: "c1", Message: threads.Message{ID: "m-root", Content: "start"}}
 	if err := d.HandleEvent(context.Background(), scope, s, s, root); err != nil {
@@ -512,10 +594,10 @@ func TestHandleEventMapsTopLevelMessageToThreadSessionAndRepliesResume(t *testin
 	if r.calls != 2 || len(r.inputs) != 2 || len(s.sent) != 2 {
 		t.Fatalf("calls=%d inputs=%d sent=%d", r.calls, len(r.inputs), len(s.sent))
 	}
-	if !r.inputs[0].NewSession || r.inputs[0].ThreadID != "m-root" || r.inputs[0].RunnerSessionID != "" {
+	if !r.inputs[0].NewSession || !r.inputs[0].GenerateThreadTitle || r.inputs[0].ThreadID != "m-root" || r.inputs[0].RunnerSessionID != "" {
 		t.Fatalf("bad first input: %+v", r.inputs[0])
 	}
-	if r.inputs[1].NewSession || r.inputs[1].ThreadID != "m-root" || r.inputs[1].RunnerSessionID != "runner-s1" {
+	if r.inputs[1].NewSession || r.inputs[1].GenerateThreadTitle || r.inputs[1].ThreadID != "m-root" || r.inputs[1].RunnerSessionID != "runner-s1" {
 		t.Fatalf("bad reply input: %+v", r.inputs[1])
 	}
 	if s.sent[0].ThreadID != "m-root" || s.sent[1].ThreadID != "m-root" {

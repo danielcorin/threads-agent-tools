@@ -161,3 +161,28 @@ func TestSendMessage(t *testing.T) {
 		t.Fatalf("unexpected request auth=%q path=%q thread=%q", gotAuth, gotPath, gotThread)
 	}
 }
+
+func TestSetThreadTitle(t *testing.T) {
+	var gotAuth, gotPath string
+	var got SetThreadTitleRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotPath = r.URL.Path
+		if r.Method != http.MethodPut {
+			t.Fatalf("method=%s", r.Method)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(SetThreadTitleResponse{OK: true, Applied: true, ThreadID: "root-1", ThreadTitle: got.Title, ThreadTitleUpdatedAt: 123})
+	}))
+	defer srv.Close()
+	c := Client{BaseURL: srv.URL, Token: "tok", HTTP: srv.Client()}
+	out, err := c.SetThreadTitle(context.Background(), "root 1", SetThreadTitleRequest{Title: "Investigate reconnects", IfUnset: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotAuth != "Bearer tok" || gotPath != "/messages/root 1/thread-title" || got.Title != "Investigate reconnects" || !got.IfUnset || !out.Applied || out.ThreadID != "root-1" {
+		t.Fatalf("request auth=%q path=%q body=%+v response=%+v", gotAuth, gotPath, got, out)
+	}
+}

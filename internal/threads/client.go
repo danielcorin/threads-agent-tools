@@ -180,6 +180,13 @@ func (c Client) AddReaction(ctx context.Context, messageID, emoji string) error 
 	return c.doJSON(ctx, http.MethodPost, u, map[string]string{"emoji": emoji}, nil, "threads add reaction")
 }
 
+func (c Client) SetThreadTitle(ctx context.Context, messageID string, req SetThreadTitleRequest) (SetThreadTitleResponse, error) {
+	var out SetThreadTitleResponse
+	u := strings.TrimRight(c.BaseURL, "/") + "/messages/" + url.PathEscape(messageID) + "/thread-title"
+	err := c.doJSON(ctx, http.MethodPut, u, req, &out, "threads set thread title")
+	return out, err
+}
+
 func (c Client) CreateProcess(ctx context.Context, req CreateProcessRequest) (CreateProcessResponse, error) {
 	var out CreateProcessResponse
 	u := strings.TrimRight(c.BaseURL, "/") + "/processes"

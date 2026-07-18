@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/danielcorin/threads-agent-bridge/internal/config"
 	"github.com/danielcorin/threads-agent-bridge/internal/runner"
@@ -29,6 +30,10 @@ type Sender interface {
 
 type Reactor interface {
 	AddReaction(context.Context, string, string) error
+}
+
+type ThreadTitler interface {
+	SetThreadTitle(context.Context, string, threads.SetThreadTitleRequest) (threads.SetThreadTitleResponse, error)
 }
 
 type ProcessClient interface {
@@ -176,6 +181,7 @@ func (d *Daemon) HandleEvent(ctx context.Context, scope config.Scope, sender Sen
 	if err != nil {
 		return err
 	}
+	generateThreadTitle := scope.Runner.AutoTitle && runnerSessionID == "" && isNewRootMessage(event, threadID)
 	processID := processID(scope.ID, event.Message.ID)
 	if processes != nil {
 		created, err := processes.CreateProcess(ctx, threads.CreateProcessRequest{ID: processID, ChannelID: event.ChannelID, MessageID: event.Message.ID, UserID: event.Message.SenderID, Status: "running", PID: os.Getpid()})
@@ -195,7 +201,7 @@ func (d *Daemon) HandleEvent(ctx context.Context, scope config.Scope, sender Sen
 	d.trackProcess(processID, cancel)
 	defer d.untrackProcess(processID)
 
-	out, err := d.Runner.Run(runCtx, scope, runner.Input{ScopeID: scope.ID, Event: event, ThreadID: threadID, RunnerSessionID: runnerSessionID, NewSession: runnerSessionID == "", OnToolEvent: d.toolEventHandler(scope, sender, processes, processID, event, threadID), OnLimitEvent: d.limitEventHandler(scope, sender, processes, processID, event, threadID)})
+	out, err := d.Runner.Run(runCtx, scope, runner.Input{ScopeID: scope.ID, Event: event, ThreadID: threadID, RunnerSessionID: runnerSessionID, NewSession: runnerSessionID == "", GenerateThreadTitle: generateThreadTitle, OnToolEvent: d.toolEventHandler(scope, sender, processes, processID, event, threadID), OnLimitEvent: d.limitEventHandler(scope, sender, processes, processID, event, threadID)})
 	if err != nil {
 		status := "error"
 		if runCtx.Err() != nil || ctx.Err() != nil {
@@ -219,6 +225,9 @@ func (d *Daemon) HandleEvent(ctx context.Context, scope config.Scope, sender Sen
 		if err := d.Store.SaveRunnerSessionID(ctx, scope.ID, event.ChannelID, threadID, out.RunnerSessionID); err != nil {
 			return err
 		}
+	}
+	if generateThreadTitle {
+		d.setGeneratedThreadTitle(context.WithoutCancel(ctx), scope, sender, threadID, out.ThreadTitle)
 	}
 	if len(out.Reactions) > 0 {
 		if reactor, ok := sender.(Reactor); ok {
@@ -258,6 +267,38 @@ func (d *Daemon) warnNonFatalProcessError(scope config.Scope, operation string, 
 	if err != nil && d.Logger != nil {
 		d.Logger.Warn("non-fatal process api error", "scope", scope.ID, "operation", operation, "error", err)
 	}
+}
+
+func (d *Daemon) setGeneratedThreadTitle(ctx context.Context, scope config.Scope, sender Sender, threadID, value string) {
+	title, ok := normalizeThreadTitle(value)
+	if !ok {
+		if strings.TrimSpace(value) != "" && d.Logger != nil {
+			d.Logger.Warn("ignored invalid generated thread title", "scope", scope.ID, "thread_id", threadID)
+		}
+		return
+	}
+	titler, ok := sender.(ThreadTitler)
+	if !ok {
+		if d.Logger != nil {
+			d.Logger.Warn("generated thread title requested but sender cannot set titles", "scope", scope.ID, "thread_id", threadID)
+		}
+		return
+	}
+	result, err := titler.SetThreadTitle(ctx, threadID, threads.SetThreadTitleRequest{Title: title, IfUnset: true})
+	if err != nil {
+		if d.Logger != nil {
+			d.Logger.Warn("set generated thread title", "scope", scope.ID, "thread_id", threadID, "error", err)
+		}
+		return
+	}
+	if d.Logger != nil {
+		d.Logger.Debug("generated thread title handled", "scope", scope.ID, "thread_id", threadID, "applied", result.Applied)
+	}
+}
+
+func normalizeThreadTitle(value string) (string, bool) {
+	title := strings.Join(strings.Fields(value), " ")
+	return title, title != "" && utf8.RuneCountInString(title) <= 120
 }
 
 func runnerErrorMessage(err error) string {
@@ -449,6 +490,13 @@ func rootThreadID(event threads.Event) string {
 
 func isMessageEvent(event threads.Event) bool {
 	return event.Type == "message.created" || event.Type == "message.invoked" || event.Type == "message"
+}
+
+func isNewRootMessage(event threads.Event, threadID string) bool {
+	if event.Emoji != "" || event.Message.ID == "" || event.Message.ID != threadID {
+		return false
+	}
+	return event.Type == "message.created" || event.Type == "message"
 }
 
 func isReactionEvent(event threads.Event) bool {

@@ -120,6 +120,19 @@ type SendMessageRequest struct {
 	Metadata      map[string]any `json:"metadata,omitempty"`
 }
 
+type SetThreadTitleRequest struct {
+	Title   string `json:"title"`
+	IfUnset bool   `json:"if_unset,omitempty"`
+}
+
+type SetThreadTitleResponse struct {
+	OK                   bool   `json:"ok"`
+	Applied              bool   `json:"applied"`
+	ThreadID             string `json:"thread_id"`
+	ThreadTitle          string `json:"thread_title"`
+	ThreadTitleUpdatedAt int64  `json:"thread_title_updated_at"`
+}
+
 type CreateProcessRequest struct {
 	ID        string `json:"id,omitempty"`
 	ChannelID string `json:"channel_id"`

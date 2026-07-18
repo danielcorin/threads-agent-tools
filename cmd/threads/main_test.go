@@ -220,6 +220,70 @@ func TestReactCanTargetAnyMessageID(t *testing.T) {
 	}
 }
 
+func TestTitleUsesRootEnvDefaultAndIfUnset(t *testing.T) {
+	var gotAuth, gotPath string
+	var got threads.SetThreadTitleRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotPath = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(threads.SetThreadTitleResponse{OK: true, Applied: true, ThreadID: "root-1", ThreadTitle: got.Title, ThreadTitleUpdatedAt: 123})
+	}))
+	defer srv.Close()
+	getenv := func(key string) string {
+		switch key {
+		case "THREADS_BASE_URL":
+			return srv.URL
+		case "THREADS_API_TOKEN":
+			return "tok"
+		case "THREADS_THREAD_ID":
+			return "root-1"
+		case "THREADS_MESSAGE_ID":
+			return "reply-1"
+		default:
+			return ""
+		}
+	}
+	var stdout, stderr bytes.Buffer
+	if err := run(context.Background(), []string{"title", "--title", "  Investigate   reconnects  ", "--if-unset"}, getenv, bytes.NewBuffer(nil), &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if gotAuth != "Bearer tok" || gotPath != "/messages/root-1/thread-title" || got.Title != "Investigate reconnects" || !got.IfUnset {
+		t.Fatalf("request auth=%q path=%q body=%+v", gotAuth, gotPath, got)
+	}
+	if stdout.String() != "titled\n" {
+		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
+func TestTitleReportsExistingTitleAsUnchanged(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(threads.SetThreadTitleResponse{OK: true, Applied: false, ThreadID: "root-1", ThreadTitle: "Human title", ThreadTitleUpdatedAt: 123})
+	}))
+	defer srv.Close()
+	getenv := func(key string) string {
+		switch key {
+		case "THREADS_BASE_URL":
+			return srv.URL
+		case "THREADS_API_TOKEN":
+			return "tok"
+		case "THREADS_THREAD_ID":
+			return "root-1"
+		default:
+			return ""
+		}
+	}
+	var stdout, stderr bytes.Buffer
+	if err := run(context.Background(), []string{"title", "--title", "Generated title", "--if-unset"}, getenv, bytes.NewBuffer(nil), &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "unchanged\n" {
+		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
 func TestSendRequiresContent(t *testing.T) {
 	getenv := func(key string) string {
 		switch key {

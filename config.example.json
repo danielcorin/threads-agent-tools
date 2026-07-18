@@ -16,7 +16,8 @@
           "--json"
         ],
         "working_dir": "/path/to/workspace",
-        "structured": true
+        "structured": true,
+        "auto_title": true
       },
       "safety": {
         "mode": "read-only",
@@ -50,7 +51,8 @@
           "stream-json"
         ],
         "working_dir": "/path/to/workspace",
-        "structured": true
+        "structured": true,
+        "auto_title": true
       },
       "safety": {
         "mode": "read-only",
@@ -84,7 +86,8 @@
           "--print"
         ],
         "working_dir": "/path/to/workspace",
-        "structured": true
+        "structured": true,
+        "auto_title": true
       },
       "safety": {
         "mode": "read-only",

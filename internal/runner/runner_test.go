@@ -12,8 +12,8 @@ import (
 )
 
 func TestParseStructuredOutput(t *testing.T) {
-	out := parseStructuredOutput(Output{Text: `{"content":"Done","reactions":[{"message_id":"m1","emoji":"✅"},{"message_id":"","emoji":"❌"}]}`})
-	if out.Text != "Done" || len(out.Reactions) != 1 || out.Reactions[0].MessageID != "m1" || out.Reactions[0].Emoji != "✅" {
+	out := parseStructuredOutput(Output{Text: `{"content":"Done","thread_title":"  Investigate reconnects  ","reactions":[{"message_id":"m1","emoji":"✅"},{"message_id":"","emoji":"❌"}]}`})
+	if out.Text != "Done" || out.ThreadTitle != "Investigate reconnects" || len(out.Reactions) != 1 || out.Reactions[0].MessageID != "m1" || out.Reactions[0].Emoji != "✅" {
 		t.Fatalf("bad structured output: %+v", out)
 	}
 }
@@ -274,6 +274,23 @@ func TestBuildPromptDocumentsThreadsSendAsInterimOnly(t *testing.T) {
 	prompt := buildPrompt(config.Scope{}, Input{Event: threads.Event{Message: threads.Message{Content: "ship it"}}})
 	if !strings.Contains(prompt, "threads send --content") || !strings.Contains(prompt, "threads react") || !strings.Contains(prompt, "still write your final answer to stdout") || !strings.Contains(prompt, "ship it") {
 		t.Fatalf("prompt missing CLI contract: %q", prompt)
+	}
+}
+
+func TestBuildPromptRequiresTitleForEligibleRoot(t *testing.T) {
+	scope := config.Scope{Runner: config.RunnerConfig{Structured: true, AutoTitle: true}}
+	input := Input{GenerateThreadTitle: true, Event: threads.Event{Message: threads.Message{Content: "fix reconnects"}}}
+	prompt := buildPrompt(scope, input)
+	if !strings.Contains(prompt, `"thread_title":"Concise descriptive title"`) || !strings.Contains(prompt, "3-8 words") || !strings.Contains(prompt, "do not call a tool") {
+		t.Fatalf("prompt missing automatic title contract: %q", prompt)
+	}
+}
+
+func TestBuildPromptDoesNotRequestTitleOnLaterTurns(t *testing.T) {
+	scope := config.Scope{Runner: config.RunnerConfig{Structured: true, AutoTitle: true}}
+	prompt := buildPrompt(scope, Input{Event: threads.Event{Message: threads.Message{Content: "continue"}}})
+	if strings.Contains(prompt, `"thread_title"`) || strings.Contains(prompt, "newly created Threads root message") {
+		t.Fatalf("later-turn prompt requested a title: %q", prompt)
 	}
 }
 

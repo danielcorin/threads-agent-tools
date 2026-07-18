@@ -42,9 +42,57 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdin i
 		return runSend(ctx, args[1:], getenv, stdin, stdout)
 	case "react":
 		return runReact(ctx, args[1:], getenv, stdout)
+	case "title":
+		return runTitle(ctx, args[1:], getenv, stdout)
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
+}
+
+func runTitle(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("title", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	baseURL := fs.String("base-url", getenvDefault(getenv, "THREADS_BASE_URL", ""), "Threads API base URL")
+	token := fs.String("token", getenvDefault(getenv, "THREADS_API_TOKEN", ""), "Threads API token")
+	tokenEnv := fs.String("token-env", "", "environment variable containing the Threads API token")
+	defaultMessageID := getenvDefault(getenv, "THREADS_THREAD_ID", getenvDefault(getenv, "THREADS_MESSAGE_ID", ""))
+	messageID := fs.String("message", defaultMessageID, "target Threads root or reply message id")
+	fs.StringVar(messageID, "message-id", *messageID, "target Threads root or reply message id; alias for --message")
+	title := fs.String("title", "", "human-readable thread title")
+	ifUnset := fs.Bool("if-unset", false, "set the title only when the thread is currently untitled")
+	timeout := fs.Duration("timeout", 30*time.Second, "request timeout")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *baseURL == "" {
+		return errors.New("--base-url or THREADS_BASE_URL is required")
+	}
+	if *tokenEnv != "" {
+		*token = getenv(*tokenEnv)
+	}
+	if *token == "" {
+		return errors.New("--token, --token-env, or THREADS_API_TOKEN is required")
+	}
+	if *messageID == "" {
+		return errors.New("--message, --message-id, THREADS_THREAD_ID, or THREADS_MESSAGE_ID is required")
+	}
+	normalizedTitle := strings.Join(strings.Fields(*title), " ")
+	if normalizedTitle == "" {
+		return errors.New("--title is required")
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, *timeout)
+	defer cancel()
+	client := threads.Client{BaseURL: *baseURL, Token: *token}
+	result, err := client.SetThreadTitle(reqCtx, *messageID, threads.SetThreadTitleRequest{Title: normalizedTitle, IfUnset: *ifUnset})
+	if err != nil {
+		return err
+	}
+	status := "titled"
+	if !result.Applied {
+		status = "unchanged"
+	}
+	_, _ = fmt.Fprintln(stdout, status)
+	return nil
 }
 
 func runReact(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer) error {
@@ -182,6 +230,7 @@ func printUsage(w io.Writer) {
 Usage:
   threads send [flags]
   threads react [flags]
+  threads title [flags]
 
 send posts an immediate side-effect message to Threads. It is for interim
 progress/status/artifact messages while an agent loop continues. The agent's
@@ -190,6 +239,10 @@ as the final response.
 
 react adds an emoji reaction to any Threads message by id, defaulting to the
 trigger message for the current agent run.
+
+title sets or renames a thread title, defaulting to the root message for the
+current agent run. Use --if-unset for an automatic title that must not replace
+an existing title.
 
 Environment defaults:
   THREADS_BASE_URL, THREADS_API_TOKEN, THREADS_CHANNEL_ID, THREADS_THREAD_ID,
@@ -204,5 +257,8 @@ Examples:
   threads send --attachment-ids att_123,att_456
   threads react --emoji "✅"
   threads react --message msg_123 --emoji "👀"
-  threads react --message-id msg_456 --emoji "🚀"`)
+  threads react --message-id msg_456 --emoji "🚀"
+  threads title --title "Investigate WebSocket reconnects"
+  threads title --message-id msg_456 --title "Release v2 follow-ups"
+  threads title --title "Generated first title" --if-unset`)
 }

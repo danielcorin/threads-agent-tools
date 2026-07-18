@@ -17,18 +17,20 @@ import (
 )
 
 type Input struct {
-	ScopeID         string
-	Event           threads.Event
-	ThreadID        string
-	RunnerSessionID string
-	NewSession      bool
-	OnToolEvent     ToolEventHandler
-	OnLimitEvent    LimitEventHandler
+	ScopeID             string
+	Event               threads.Event
+	ThreadID            string
+	RunnerSessionID     string
+	NewSession          bool
+	GenerateThreadTitle bool
+	OnToolEvent         ToolEventHandler
+	OnLimitEvent        LimitEventHandler
 }
 
 type Output struct {
 	Text            string
 	RunnerSessionID string
+	ThreadTitle     string
 	Reactions       []Reaction
 }
 
@@ -261,7 +263,11 @@ func buildBridgeInstructions(scope config.Scope, input Input) string {
 		b.WriteString("This run was invoked by an emoji reaction. THREADS_REACTION_EMOJI contains the triggering emoji, and THREADS_MESSAGE_ID is the reacted-to message.\n")
 	}
 	if scope.Runner.Structured {
-		b.WriteString("Structured final-output mode is enabled. For the final answer, write either plain text or a single JSON object like {\"content\":\"message to post\",\"reactions\":[{\"message_id\":\"$THREADS_MESSAGE_ID\",\"emoji\":\"👍\"}]}. Use reactions only when they add value.\n")
+		if input.GenerateThreadTitle {
+			b.WriteString("Structured final-output mode is enabled. This is a newly created Threads root message, so the final answer must be a single JSON object like {\"content\":\"message to post\",\"thread_title\":\"Concise descriptive title\",\"reactions\":[]}. Set thread_title to 3-8 words that describe the user's intent, preferably under 60 characters. Do not quote it, end it with punctuation, or use a generic title such as \"User Request\". The bridge will set the title; do not call a tool to do so. Use reactions only when they add value.\n")
+		} else {
+			b.WriteString("Structured final-output mode is enabled. For the final answer, write either plain text or a single JSON object like {\"content\":\"message to post\",\"reactions\":[{\"message_id\":\"$THREADS_MESSAGE_ID\",\"emoji\":\"👍\"}]}. Use reactions only when they add value.\n")
+		}
 	}
 	return b.String()
 }
@@ -327,9 +333,10 @@ func parseStructuredOutput(out Output) Output {
 		return out
 	}
 	var payload struct {
-		Content   string     `json:"content"`
-		Text      string     `json:"text"`
-		Reactions []Reaction `json:"reactions"`
+		Content     string     `json:"content"`
+		Text        string     `json:"text"`
+		ThreadTitle string     `json:"thread_title"`
+		Reactions   []Reaction `json:"reactions"`
 	}
 	if err := json.Unmarshal([]byte(text), &payload); err != nil {
 		return out
@@ -339,6 +346,7 @@ func parseStructuredOutput(out Output) Output {
 	} else {
 		out.Text = strings.TrimSpace(payload.Text)
 	}
+	out.ThreadTitle = strings.TrimSpace(payload.ThreadTitle)
 	for _, reaction := range payload.Reactions {
 		if strings.TrimSpace(reaction.MessageID) != "" && strings.TrimSpace(reaction.Emoji) != "" {
 			out.Reactions = append(out.Reactions, Reaction{MessageID: strings.TrimSpace(reaction.MessageID), Emoji: strings.TrimSpace(reaction.Emoji)})
