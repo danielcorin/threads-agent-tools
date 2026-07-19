@@ -1,0 +1,44 @@
+{
+  "name": "@threads-space/cli",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Open-source, contract-derived command-line client for Threads.",
+  "bin": {
+    "threads": "dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "artifact:build": "npm run build && node scripts/package-artifacts.mjs",
+    "artifact:test": "node --test scripts/package-artifacts.node-test.mjs",
+    "audit:staging": "npm run build --silent && node scripts/staging-audit.mjs",
+    "build": "npm run contract:generate && tsc --project tsconfig.build.json && node scripts/build.mjs",
+    "check": "npm run contract:check && npm test && npm run artifact:test && npm run typecheck && npm run build",
+    "cli": "node dist/cli.js",
+    "contract:check": "node scripts/generate-contract.mjs --check",
+    "contract:generate": "node scripts/generate-contract.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "ajv": "^8.20.0",
+    "openapi-fetch": "^0.15.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@yao-pkg/pkg": "^6.21.0",
+    "esbuild": "^0.27.3",
+    "openapi-typescript": "^7.13.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.6"
+  }
+}

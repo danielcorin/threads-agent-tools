@@ -1,0 +1,1080 @@
+openapi: 3.1.0
+info:
+  title: Threads WebSocket Events
+  version: 0.0.2
+  description: >-
+    Machine-readable schemas for JSON messages sent over Threads WebSocket
+    connections. HTTP upgrade endpoints are documented in threads.yaml; this
+    document owns the channel and presence event payload contracts.
+paths: {}
+tags:
+  - name: channel-websocket
+    description: Events exchanged on GET /ws/{channelId}.
+  - name: presence-websocket
+    description: Events exchanged on GET /ws/presence.
+components:
+  schemas:
+    # ── Top-level unions ──────────────────────────────────────────────────
+    ClientEvent:
+      oneOf:
+        - $ref: '#/components/schemas/TypingStartClientEvent'
+        - $ref: '#/components/schemas/TypingStopClientEvent'
+        - $ref: '#/components/schemas/MarkReadClientEvent'
+        - $ref: '#/components/schemas/PingClientEvent'
+        - $ref: '#/components/schemas/ProcessKillClientEvent'
+        - $ref: '#/components/schemas/ProcessRetryClientEvent'
+        - $ref: '#/components/schemas/MessageCreateClientEvent'
+        - $ref: '#/components/schemas/ReactionAddClientEvent'
+        - $ref: '#/components/schemas/ProcessCreateClientEvent'
+        - $ref: '#/components/schemas/ProcessUpdateClientEvent'
+        - $ref: '#/components/schemas/ProcessActivityClientEvent'
+        - $ref: '#/components/schemas/MessageProcessStatusClientEvent'
+        - $ref: '#/components/schemas/PresencePongClientEvent'
+      discriminator:
+        propertyName: type
+    ServerEvent:
+      oneOf:
+        - $ref: '#/components/schemas/UserJoinedEvent'
+        - $ref: '#/components/schemas/UserLeftEvent'
+        - $ref: '#/components/schemas/UserTypingEvent'
+        - $ref: '#/components/schemas/UserStoppedTypingEvent'
+        - $ref: '#/components/schemas/PongEvent'
+        - $ref: '#/components/schemas/ActionResultEvent'
+        - $ref: '#/components/schemas/ActionErrorEvent'
+        - $ref: '#/components/schemas/MessageEvent'
+        - $ref: '#/components/schemas/MessageEditedEvent'
+        - $ref: '#/components/schemas/MessageDeletedEvent'
+        - $ref: '#/components/schemas/ReactionAddedEvent'
+        - $ref: '#/components/schemas/ReactionRemovedEvent'
+        - $ref: '#/components/schemas/ProcessCreatedEvent'
+        - $ref: '#/components/schemas/ProcessUpdatedEvent'
+        - $ref: '#/components/schemas/ProcessStatusEvent'
+        - $ref: '#/components/schemas/ProcessKillEvent'
+        - $ref: '#/components/schemas/ProcessRetryEvent'
+        - $ref: '#/components/schemas/ChannelUpdatedEvent'
+        - $ref: '#/components/schemas/ChannelArchivedEvent'
+        - $ref: '#/components/schemas/ChannelDeletedEvent'
+        - $ref: '#/components/schemas/MemberAddedEvent'
+        - $ref: '#/components/schemas/MemberRemovedEvent'
+        - $ref: '#/components/schemas/MessagePinnedEvent'
+        - $ref: '#/components/schemas/MessageUnpinnedEvent'
+        - $ref: '#/components/schemas/MessageResolvedEvent'
+        - $ref: '#/components/schemas/MessageUnresolvedEvent'
+        - $ref: '#/components/schemas/ThreadTitleUpdatedEvent'
+        - $ref: '#/components/schemas/LinkPreviewEvent'
+        - $ref: '#/components/schemas/BotLoopTrippedEvent'
+        - $ref: '#/components/schemas/BoardUpdatedEvent'
+        - $ref: '#/components/schemas/CardCreatedEvent'
+        - $ref: '#/components/schemas/CardUpdatedEvent'
+        - $ref: '#/components/schemas/CardDeletedEvent'
+        - $ref: '#/components/schemas/removed_event'
+        - $ref: '#/components/schemas/PresenceSnapshotEvent'
+        - $ref: '#/components/schemas/PresenceUpdateEvent'
+        - $ref: '#/components/schemas/PresencePingEvent'
+      discriminator:
+        propertyName: type
+
+    # ── Common primitives ─────────────────────────────────────────────────
+    Id:
+      type: string
+      minLength: 1
+    NullableId:
+      type:
+        - string
+        - 'null'
+    EpochSeconds:
+      type: integer
+      minimum: 0
+    IsoDateTime:
+      type: string
+      format: date-time
+    ProcessStatus:
+      type: string
+      enum: [queued, running, processing, done, error, killed, restarted]
+    ProcessingMode:
+      type: string
+      enum: [immediate, serial]
+    UserRole:
+      type: string
+      enum: [user, bot, admin]
+    JsonObject:
+      type: object
+      additionalProperties: true
+    ActionId:
+      description: Optional caller-provided correlation ID echoed by action_result/action_error.
+      type:
+        - string
+        - integer
+        - 'null'
+    Mention:
+      type: object
+      required: [userId, username]
+      properties:
+        userId:
+          $ref: '#/components/schemas/Id'
+        username:
+          type: string
+      additionalProperties: false
+    Attachment:
+      type: object
+      required: [id, filename, contentType, sizeBytes, url]
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        filename:
+          type: string
+        contentType:
+          type: string
+        sizeBytes:
+          type: integer
+          minimum: 0
+        url:
+          type: string
+      additionalProperties: false
+    Pin:
+      type: object
+      required: [id, channel_id, message_id, pinned_by, created_at]
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        channel_id:
+          $ref: '#/components/schemas/Id'
+        message_id:
+          $ref: '#/components/schemas/Id'
+        pinned_by:
+          $ref: '#/components/schemas/Id'
+        created_at:
+          $ref: '#/components/schemas/EpochSeconds'
+      additionalProperties: false
+    ProcessRecord:
+      type: object
+      required:
+        - id
+        - channel_id
+        - channel_name
+        - is_dm
+        - message_id
+        - thread_id
+        - user_id
+        - username
+        - display_name
+        - status
+        - bot_id
+        - bot_username
+        - bot_display_name
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        channel_id:
+          $ref: '#/components/schemas/Id'
+        channel_name:
+          type: string
+        is_dm:
+          type: integer
+          enum: [0, 1]
+        message_id:
+          $ref: '#/components/schemas/NullableId'
+        thread_id:
+          $ref: '#/components/schemas/NullableId'
+        resolved_at:
+          oneOf:
+            - $ref: '#/components/schemas/EpochSeconds'
+            - type: 'null'
+          description: >-
+            Unix seconds when the linked top-level thread was marked resolved.
+            For processes attached to thread replies, this is inherited from the
+            thread root.
+        resolved_by:
+          $ref: '#/components/schemas/NullableId'
+        user_id:
+          $ref: '#/components/schemas/Id'
+        username:
+          type: string
+        display_name:
+          type:
+            - string
+            - 'null'
+        status:
+          $ref: '#/components/schemas/ProcessStatus'
+        started_at:
+          oneOf:
+            - $ref: '#/components/schemas/IsoDateTime'
+            - type: 'null'
+        ended_at:
+          oneOf:
+            - $ref: '#/components/schemas/IsoDateTime'
+            - type: 'null'
+        updated_at:
+          oneOf:
+            - $ref: '#/components/schemas/IsoDateTime'
+            - type: 'null'
+        pid:
+          type:
+            - integer
+            - 'null'
+        input_tokens:
+          type: integer
+          minimum: 0
+        output_tokens:
+          type: integer
+          minimum: 0
+        cache_creation_input_tokens:
+          type: integer
+          minimum: 0
+        cache_read_input_tokens:
+          type: integer
+          minimum: 0
+        tool_call_count:
+          type: integer
+          minimum: 0
+        reply_count:
+          type: integer
+          minimum: 0
+        bot_id:
+          $ref: '#/components/schemas/NullableId'
+        bot_username:
+          type: string
+        bot_display_name:
+          type:
+            - string
+            - 'null'
+      additionalProperties: false
+
+    # ── Channel client events ──────────────────────────────────────────────
+    TypingStartClientEvent:
+      type: object
+      required: [type]
+      properties:
+        type:
+          const: typing_start
+      additionalProperties: false
+    TypingStopClientEvent:
+      type: object
+      required: [type]
+      properties:
+        type:
+          const: typing_stop
+      additionalProperties: false
+    MarkReadClientEvent:
+      type: object
+      required: [type, messageId]
+      properties:
+        type:
+          const: mark_read
+        messageId:
+          $ref: '#/components/schemas/Id'
+      additionalProperties: false
+    PingClientEvent:
+      type: object
+      required: [type]
+      properties:
+        type:
+          const: ping
+      additionalProperties: false
+    ProcessKillClientEvent:
+      type: object
+      required: [type, messageId, processId]
+      properties:
+        type:
+          const: removed_event
+        messageId:
+          $ref: '#/components/schemas/Id'
+        processId:
+          $ref: '#/components/schemas/Id'
+      additionalProperties: false
+    ProcessRetryClientEvent:
+      type: object
+      required: [type, messageId, processId]
+      properties:
+        type:
+          const: removed_event
+        messageId:
+          $ref: '#/components/schemas/Id'
+        processId:
+          $ref: '#/components/schemas/Id'
+      additionalProperties: false
+    MessageCreateClientEvent:
+      type: object
+      required: [type, channelId, content]
+      properties:
+        type:
+          const: message.create
+        actionId:
+          $ref: '#/components/schemas/ActionId'
+        channelId:
+          $ref: '#/components/schemas/Id'
+        content:
+          type: string
+        threadId:
+          $ref: '#/components/schemas/NullableId'
+        parentId:
+          $ref: '#/components/schemas/NullableId'
+        attachmentIds:
+          type: array
+          items:
+            $ref: '#/components/schemas/Id'
+        metadata:
+          oneOf:
+            - $ref: '#/components/schemas/JsonObject'
+            - type: 'null'
+        message_type:
+          type: string
+          enum: [human, response, progress, tool_output, thinking]
+        messageType:
+          type: string
+          enum: [human, response, progress, tool_output, thinking]
+      additionalProperties: false
+    ReactionAddClientEvent:
+      type: object
+      required: [type, messageId, emoji]
+      properties:
+        type:
+          const: reaction.add
+        actionId:
+          $ref: '#/components/schemas/ActionId'
+        messageId:
+          $ref: '#/components/schemas/Id'
+        emoji:
+          type: string
+      additionalProperties: false
+    ProcessCreateClientEvent:
+      type: object
+      required: [type]
+      properties:
+        type:
+          const: process.create
+        actionId:
+          $ref: '#/components/schemas/ActionId'
+        id:
+          $ref: '#/components/schemas/Id'
+        channel_id:
+          $ref: '#/components/schemas/Id'
+        channelId:
+          $ref: '#/components/schemas/Id'
+        message_id:
+          $ref: '#/components/schemas/NullableId'
+        messageId:
+          $ref: '#/components/schemas/NullableId'
+        user_id:
+          $ref: '#/components/schemas/Id'
+        userId:
+          $ref: '#/components/schemas/Id'
+        bot_id:
+          $ref: '#/components/schemas/NullableId'
+        botUserId:
+          $ref: '#/components/schemas/NullableId'
+        status:
+          $ref: '#/components/schemas/ProcessStatus'
+        pid:
+          type:
+            - integer
+            - 'null'
+      additionalProperties: false
+    ProcessUpdateClientEvent:
+      type: object
+      required: [type]
+      properties:
+        type:
+          const: process.update
+        actionId:
+          $ref: '#/components/schemas/ActionId'
+        id:
+          $ref: '#/components/schemas/Id'
+        processId:
+          $ref: '#/components/schemas/Id'
+        status:
+          $ref: '#/components/schemas/ProcessStatus'
+        tool_call_count:
+          type: integer
+          minimum: 0
+        reply_count:
+          type: integer
+          minimum: 0
+        input_tokens:
+          type: integer
+          minimum: 0
+        output_tokens:
+          type: integer
+          minimum: 0
+        cache_creation_input_tokens:
+          type: integer
+          minimum: 0
+        cache_read_input_tokens:
+          type: integer
+          minimum: 0
+      additionalProperties: false
+    ProcessActivityClientEvent:
+      type: object
+      required: [type, processId]
+      properties:
+        type:
+          const: process.activity
+        actionId:
+          $ref: '#/components/schemas/ActionId'
+        processId:
+          $ref: '#/components/schemas/Id'
+        activityType:
+          type: string
+          enum: [tool_call, reply, token_usage]
+        activity_type:
+          type: string
+          enum: [tool_call, reply, token_usage]
+        processActivityType:
+          type: string
+          enum: [tool_call, reply, token_usage]
+        input_tokens:
+          type: integer
+          minimum: 0
+        output_tokens:
+          type: integer
+          minimum: 0
+        cache_creation_input_tokens:
+          type: integer
+          minimum: 0
+        cache_read_input_tokens:
+          type: integer
+          minimum: 0
+      additionalProperties: false
+    MessageProcessStatusClientEvent:
+      type: object
+      required: [type, messageId, processId, status]
+      properties:
+        type:
+          const: message.process_status
+        actionId:
+          $ref: '#/components/schemas/ActionId'
+        messageId:
+          $ref: '#/components/schemas/Id'
+        processId:
+          $ref: '#/components/schemas/Id'
+        status:
+          $ref: '#/components/schemas/ProcessStatus'
+        input_tokens:
+          type: integer
+          minimum: 0
+        output_tokens:
+          type: integer
+          minimum: 0
+        cache_creation_input_tokens:
+          type: integer
+          minimum: 0
+        cache_read_input_tokens:
+          type: integer
+          minimum: 0
+        error_text:
+          type:
+            - string
+            - 'null'
+      additionalProperties: false
+
+    # ── Presence client events ─────────────────────────────────────────────
+    PresencePongClientEvent:
+      type: object
+      required: [type]
+      properties:
+        type:
+          const: pong
+      additionalProperties: false
+
+    # ── Channel server events: connection and keepalive ────────────────────
+    UserJoinedEvent:
+      type: object
+      required: [type, userId, username]
+      properties:
+        type:
+          const: user_joined
+        userId:
+          $ref: '#/components/schemas/Id'
+        username:
+          type: string
+      additionalProperties: false
+    UserLeftEvent:
+      type: object
+      required: [type, userId]
+      properties:
+        type:
+          const: user_left
+        userId:
+          $ref: '#/components/schemas/Id'
+      additionalProperties: false
+    UserTypingEvent:
+      type: object
+      required: [type, userId, username]
+      properties:
+        type:
+          const: user_typing
+        userId:
+          $ref: '#/components/schemas/Id'
+        username:
+          type: string
+      additionalProperties: false
+    UserStoppedTypingEvent:
+      type: object
+      required: [type, userId]
+      properties:
+        type:
+          const: user_stopped_typing
+        userId:
+          $ref: '#/components/schemas/Id'
+      additionalProperties: false
+    PongEvent:
+      type: object
+      required: [type]
+      properties:
+        type:
+          const: pong
+      additionalProperties: false
+    ActionResultEvent:
+      type: object
+      required: [type, actionId, action, status, result]
+      properties:
+        type:
+          const: action_result
+        actionId:
+          $ref: '#/components/schemas/ActionId'
+        action:
+          type: string
+          enum: [message.create, reaction.add, process.create, process.update, process.activity, message.process_status]
+        status:
+          type: integer
+          minimum: 100
+          maximum: 599
+        result:
+          description: JSON response body returned by the underlying action handler.
+      additionalProperties: false
+    ActionErrorEvent:
+      type: object
+      required: [type, actionId, status, error]
+      properties:
+        type:
+          const: action_error
+        actionId:
+          $ref: '#/components/schemas/ActionId'
+        status:
+          type: integer
+          minimum: 100
+          maximum: 599
+        error:
+          description: Error body or message returned by the failed action.
+      additionalProperties: false
+
+    # ── Channel server events: messages and reactions ──────────────────────
+    MessageEvent:
+      type: object
+      required:
+        - type
+        - id
+        - channelId
+        - userId
+        - username
+        - content
+        - threadId
+        - createdAt
+        - mentions
+        - attachments
+        - metadata
+        - autoRespondBotId
+        - processingMode
+      properties:
+        type:
+          const: message
+        id:
+          $ref: '#/components/schemas/Id'
+        channelId:
+          $ref: '#/components/schemas/Id'
+        userId:
+          $ref: '#/components/schemas/Id'
+        username:
+          type: string
+        displayName:
+          type:
+            - string
+            - 'null'
+        nameColor:
+          type:
+            - string
+            - 'null'
+        userRole:
+          $ref: '#/components/schemas/UserRole'
+        content:
+          type: string
+        threadId:
+          $ref: '#/components/schemas/NullableId'
+        createdAt:
+          $ref: '#/components/schemas/EpochSeconds'
+        mentions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Mention'
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/Attachment'
+        metadata:
+          oneOf:
+            - $ref: '#/components/schemas/JsonObject'
+            - type: 'null'
+        messageType:
+          type: string
+          enum: [human, response, progress, tool_output, thinking]
+        autoRespondBotId:
+          $ref: '#/components/schemas/NullableId'
+        processingMode:
+          $ref: '#/components/schemas/ProcessingMode'
+      additionalProperties: false
+    MessageEditedEvent:
+      type: object
+      required: [type, id, content, editedAt]
+      properties:
+        type:
+          const: message_edited
+        id:
+          $ref: '#/components/schemas/Id'
+        content:
+          type: string
+        editedAt:
+          $ref: '#/components/schemas/EpochSeconds'
+      additionalProperties: false
+    MessageDeletedEvent:
+      type: object
+      required: [type, id, threadId]
+      properties:
+        type:
+          const: message_deleted
+        id:
+          $ref: '#/components/schemas/Id'
+        threadId:
+          $ref: '#/components/schemas/NullableId'
+      additionalProperties: false
+    ReactionAddedEvent:
+      type: object
+      required: [type, messageId, userId, username, userRole, messageAuthorRole, emoji, autoRespondBotId, processingMode]
+      properties:
+        type:
+          const: reaction_added
+        messageId:
+          $ref: '#/components/schemas/Id'
+        userId:
+          $ref: '#/components/schemas/Id'
+        username:
+          type: string
+        userRole:
+          $ref: '#/components/schemas/UserRole'
+        messageAuthorRole:
+          $ref: '#/components/schemas/UserRole'
+        emoji:
+          type: string
+        autoRespondBotId:
+          $ref: '#/components/schemas/NullableId'
+        processingMode:
+          $ref: '#/components/schemas/ProcessingMode'
+      additionalProperties: false
+    ReactionRemovedEvent:
+      type: object
+      required: [type, messageId, userId, emoji]
+      properties:
+        type:
+          const: reaction_removed
+        messageId:
+          $ref: '#/components/schemas/Id'
+        userId:
+          $ref: '#/components/schemas/Id'
+        emoji:
+          type: string
+      additionalProperties: false
+
+    # ── Channel server events: processes ───────────────────────────────────
+    ProcessCreatedEvent:
+      type: object
+      required: [type, process]
+      properties:
+        type:
+          const: process_created
+        process:
+          $ref: '#/components/schemas/ProcessRecord'
+      additionalProperties: false
+    ProcessUpdatedEvent:
+      type: object
+      required: [type, process]
+      properties:
+        type:
+          const: process_updated
+        process:
+          $ref: '#/components/schemas/ProcessRecord'
+      additionalProperties: false
+    ProcessStatusEvent:
+      type: object
+      required: [type, messageId, processId, status, threadId]
+      properties:
+        type:
+          const: process_status
+        messageId:
+          $ref: '#/components/schemas/Id'
+        processId:
+          $ref: '#/components/schemas/Id'
+        status:
+          $ref: '#/components/schemas/ProcessStatus'
+        threadId:
+          $ref: '#/components/schemas/NullableId'
+        input_tokens:
+          type: integer
+          minimum: 0
+        output_tokens:
+          type: integer
+          minimum: 0
+        cache_creation_input_tokens:
+          type: integer
+          minimum: 0
+        cache_read_input_tokens:
+          type: integer
+          minimum: 0
+        error_text:
+          type: string
+      additionalProperties: false
+    ProcessKillEvent:
+      type: object
+      required: [type, messageId, processId]
+      properties:
+        type:
+          const: process_kill
+        messageId:
+          $ref: '#/components/schemas/Id'
+        processId:
+          $ref: '#/components/schemas/Id'
+        botUserId:
+          $ref: '#/components/schemas/NullableId'
+      additionalProperties: false
+    ProcessRetryEvent:
+      type: object
+      required: [type, messageId, processId]
+      properties:
+        type:
+          const: removed_event
+        messageId:
+          $ref: '#/components/schemas/Id'
+        processId:
+          $ref: '#/components/schemas/Id'
+      additionalProperties: false
+
+    # ── Channel server events: channel/member state ────────────────────────
+    ChannelUpdatedEvent:
+      type: object
+      required: [type, channelId]
+      properties:
+        type:
+          const: channel_updated
+        channelId:
+          $ref: '#/components/schemas/Id'
+        name:
+          type: string
+        description:
+          type:
+            - string
+            - 'null'
+        processing_mode:
+          $ref: '#/components/schemas/ProcessingMode'
+        board_enabled:
+          type: integer
+          enum: [0, 1]
+        auto_respond_bot_id:
+          $ref: '#/components/schemas/NullableId'
+        is_ephemeral:
+          type: integer
+          enum: [0, 1]
+        auto_named_at:
+          oneOf:
+            - $ref: '#/components/schemas/EpochSeconds'
+            - type: 'null'
+        archived_at:
+          oneOf:
+            - $ref: '#/components/schemas/EpochSeconds'
+            - type: 'null'
+      additionalProperties: false
+    ChannelArchivedEvent:
+      type: object
+      required: [type, channelId]
+      properties:
+        type:
+          const: channel_archived
+        channelId:
+          $ref: '#/components/schemas/Id'
+      additionalProperties: false
+    ChannelDeletedEvent:
+      type: object
+      required: [type, channelId]
+      properties:
+        type:
+          const: channel_deleted
+        channelId:
+          $ref: '#/components/schemas/Id'
+      additionalProperties: false
+    MemberAddedEvent:
+      type: object
+      required: [type, channelId, targetUserId]
+      properties:
+        type:
+          const: member_added
+        channelId:
+          $ref: '#/components/schemas/Id'
+        targetUserId:
+          $ref: '#/components/schemas/Id'
+        username:
+          type: string
+        displayName:
+          type:
+            - string
+            - 'null'
+      additionalProperties: false
+    MemberRemovedEvent:
+      type: object
+      required: [type, channelId, targetUserId]
+      properties:
+        type:
+          const: member_removed
+        channelId:
+          $ref: '#/components/schemas/Id'
+        targetUserId:
+          $ref: '#/components/schemas/Id'
+      additionalProperties: false
+
+    # ── Channel server events: pins and previews ───────────────────────────
+    MessagePinnedEvent:
+      type: object
+      required: [type, channelId, messageId, pinnedBy, pin]
+      properties:
+        type:
+          const: message_pinned
+        channelId:
+          $ref: '#/components/schemas/Id'
+        messageId:
+          $ref: '#/components/schemas/Id'
+        pinnedBy:
+          $ref: '#/components/schemas/Id'
+        pin:
+          $ref: '#/components/schemas/Pin'
+      additionalProperties: false
+    MessageUnpinnedEvent:
+      type: object
+      required: [type, channelId, messageId]
+      properties:
+        type:
+          const: message_unpinned
+        channelId:
+          $ref: '#/components/schemas/Id'
+        messageId:
+          $ref: '#/components/schemas/Id'
+      additionalProperties: false
+    MessageResolvedEvent:
+      type: object
+      required: [type, id, channelId, resolvedBy, resolvedAt]
+      properties:
+        type:
+          const: message_resolved
+        id:
+          $ref: '#/components/schemas/Id'
+        channelId:
+          $ref: '#/components/schemas/Id'
+        resolvedBy:
+          $ref: '#/components/schemas/Id'
+        resolvedAt:
+          type: integer
+      additionalProperties: false
+    MessageUnresolvedEvent:
+      type: object
+      required: [type, id, channelId]
+      properties:
+        type:
+          const: message_unresolved
+        id:
+          $ref: '#/components/schemas/Id'
+        channelId:
+          $ref: '#/components/schemas/Id'
+      additionalProperties: false
+    ThreadTitleUpdatedEvent:
+      type: object
+      required: [type, channelId, threadId, title, updatedAt]
+      properties:
+        type:
+          const: thread_title_updated
+        channelId:
+          $ref: '#/components/schemas/Id'
+        threadId:
+          $ref: '#/components/schemas/Id'
+        title:
+          type: string
+        updatedAt:
+          $ref: '#/components/schemas/EpochSeconds'
+      additionalProperties: false
+    LinkPreviewEvent:
+      type: object
+      required: [type, messageId, url]
+      properties:
+        type:
+          const: link_preview
+        messageId:
+          $ref: '#/components/schemas/Id'
+        url:
+          type: string
+          format: uri
+        title:
+          type:
+            - string
+            - 'null'
+        description:
+          type:
+            - string
+            - 'null'
+        imageUrl:
+          type:
+            - string
+            - 'null'
+        siteName:
+          type:
+            - string
+            - 'null'
+      additionalProperties: false
+    BotLoopTrippedEvent:
+      type: object
+      description: >-
+        The per-channel bot-loop circuit breaker tripped: consecutive top-level
+        bot responses exceeded the threshold. Bot sockets are excluded from
+        message fan-out until a human posts or the breaker auto-resets.
+      required: [type, channelId, trippedAt]
+      properties:
+        type:
+          const: bot_loop_tripped
+        channelId:
+          $ref: '#/components/schemas/Id'
+        trippedAt:
+          type: number
+          description: Epoch milliseconds when the breaker tripped.
+      additionalProperties: false
+
+    # ── Channel server events: boards/cards/extensions ─────────────────────
+    BoardUpdatedEvent:
+      type: object
+      required: [type, id, channel_id]
+      properties:
+        type:
+          const: board_updated
+        id:
+          $ref: '#/components/schemas/Id'
+        channel_id:
+          $ref: '#/components/schemas/Id'
+        columns:
+          type: string
+        created_at:
+          type: string
+        updated_at:
+          type: string
+      additionalProperties: true
+    CardCreatedEvent:
+      allOf:
+        - $ref: '#/components/schemas/CardEventBase'
+        - type: object
+          properties:
+            type:
+              const: card_created
+    CardUpdatedEvent:
+      allOf:
+        - $ref: '#/components/schemas/CardEventBase'
+        - type: object
+          properties:
+            type:
+              const: card_updated
+    CardEventBase:
+      type: object
+      required: [type, id, board_id, column_key, title, position]
+      properties:
+        type:
+          type: string
+          enum: [card_created, card_updated]
+        id:
+          $ref: '#/components/schemas/Id'
+        board_id:
+          $ref: '#/components/schemas/Id'
+        column_key:
+          type: string
+        title:
+          type: string
+        description:
+          type:
+            - string
+            - 'null'
+        assignee:
+          $ref: '#/components/schemas/NullableId'
+        priority:
+          type: string
+        position:
+          type: number
+        source_message_id:
+          $ref: '#/components/schemas/NullableId'
+        metadata:
+          oneOf:
+            - type: string
+            - $ref: '#/components/schemas/JsonObject'
+            - type: 'null'
+        created_by:
+          $ref: '#/components/schemas/NullableId'
+        created_at:
+          type: string
+        updated_at:
+          type: string
+      additionalProperties: true
+    CardDeletedEvent:
+      type: object
+      required: [type, cardId, boardId]
+      properties:
+        type:
+          const: card_deleted
+        cardId:
+          $ref: '#/components/schemas/Id'
+        boardId:
+          $ref: '#/components/schemas/Id'
+      additionalProperties: false
+    removed_event:
+      type: object
+      required: [type, requestedBy]
+      properties:
+        type:
+          const: bot_restart_requested
+        requestedBy:
+          $ref: '#/components/schemas/Id'
+        requestedByUsername:
+          type: string
+        reason:
+          type:
+            - string
+            - 'null'
+      additionalProperties: true
+
+    # ── Presence server events ─────────────────────────────────────────────
+    PresenceSnapshotEvent:
+      type: object
+      required: [type, users]
+      properties:
+        type:
+          const: presence_snapshot
+        users:
+          type: object
+          additionalProperties:
+            type: boolean
+      additionalProperties: false
+    PresenceUpdateEvent:
+      type: object
+      required: [type, userId, online]
+      properties:
+        type:
+          const: presence_update
+        userId:
+          $ref: '#/components/schemas/Id'
+        online:
+          type: boolean
+      additionalProperties: false
+    PresencePingEvent:
+      type: object
+      required: [type]
+      properties:
+        type:
+          const: ping
+      additionalProperties: false

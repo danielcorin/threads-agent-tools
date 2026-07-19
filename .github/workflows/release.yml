@@ -1,0 +1,124 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+
+jobs:
+  cli:
+    name: CLI / ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runner: ubuntu-24.04
+            filename: threads-linux-x64
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+            filename: threads-linux-arm64
+          - target: darwin-x64
+            runner: macos-15-intel
+            filename: threads-darwin-x64
+          - target: darwin-arm64
+            runner: macos-15
+            filename: threads-darwin-arm64
+          - target: windows-x64
+            runner: windows-2025
+            filename: threads-windows-x64.exe
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - name: Build native executable
+        run: npm run artifact:build -- --target ${{ matrix.target }}
+      - name: Attest native executable
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/cli/${{ matrix.filename }}
+      - name: Upload native executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: threads-cli-${{ matrix.target }}-${{ github.sha }}
+          path: dist/cli/${{ matrix.filename }}
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: cli
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: threads-cli-*-${{ github.sha }}
+          path: dist/release
+          merge-multiple: true
+      - name: Add contracts and provenance manifests
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          cp openapi/threads.json dist/release/threads-openapi.json
+          cp openapi/ws-events.yaml dist/release/threads-ws-events.yaml
+          cd dist/release
+          sha256sum threads-darwin-* threads-linux-* threads-windows-* > THREADS_CLI_SHA256SUMS
+          sha256sum threads-openapi.json threads-ws-events.yaml > THREADS_CONTRACT_SHA256SUMS
+          files=$(jq -Rn '
+            [inputs
+              | capture("^(?<sha256>[0-9a-f]+)  (?<file>.+)$")
+              | {file, sha256}]
+          ' < THREADS_CLI_SHA256SUMS)
+          contracts=$(jq -Rn '
+            [inputs
+              | capture("^(?<sha256>[0-9a-f]+)  (?<file>.+)$")
+              | {file, sha256}]
+          ' < THREADS_CONTRACT_SHA256SUMS)
+          generated_at=$(git show -s --format=%cI "$GITHUB_SHA")
+          jq -n \
+            --arg name threads-cli \
+            --arg version "$VERSION" \
+            --arg gitSha "$GITHUB_SHA" \
+            --arg generatedAt "$generated_at" \
+            --arg source "https://github.com/${GITHUB_REPOSITORY}/tree/${GITHUB_SHA}" \
+            --argjson files "$files" \
+            --argjson contracts "$contracts" \
+            '{name:$name,version:$version,gitSha:$gitSha,generatedAt:$generatedAt,source:$source,files:$files,contracts:$contracts}' \
+            > threads-cli-manifest.json
+      - name: Smoke test Linux executable
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          chmod 0755 dist/release/threads-linux-x64
+          dist/release/threads-linux-x64 --help >/dev/null
+          test "$(dist/release/threads-linux-x64 --version)" = "threads ${VERSION}"
+          (
+            cd dist/release
+            sha256sum --check THREADS_CLI_SHA256SUMS
+            sha256sum --check THREADS_CONTRACT_SHA256SUMS
+          )
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/release/* \
+            --verify-tag \
+            --generate-notes \
+            --title "Threads CLI $GITHUB_REF_NAME"

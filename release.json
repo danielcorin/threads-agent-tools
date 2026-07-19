@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "version": "v0.1.0",
+  "source": "https://github.com/danielcorin/threads-cli/tree/v0.1.0",
+  "release": "https://github.com/danielcorin/threads-cli/releases/tag/v0.1.0",
+  "manifest": "https://github.com/danielcorin/threads-cli/releases/download/v0.1.0/threads-cli-manifest.json",
+  "checksums": "https://github.com/danielcorin/threads-cli/releases/download/v0.1.0/THREADS_CLI_SHA256SUMS"
+}
