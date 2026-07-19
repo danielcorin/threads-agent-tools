@@ -18,12 +18,24 @@ function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
 }
 
+function normalizeNewlines(value) {
+  return value.replaceAll('\r\n', '\n');
+}
+
 async function generatedFiles() {
-  const threadsSource = await readFile(sourceFiles['openapi/threads.json'], 'utf8');
-  const wsEventsSource = await readFile(sourceFiles['openapi/ws-events.yaml'], 'utf8');
+  const threadsSource = normalizeNewlines(
+    await readFile(sourceFiles['openapi/threads.json'], 'utf8'),
+  );
+  const wsEventsSource = normalizeNewlines(
+    await readFile(sourceFiles['openapi/ws-events.yaml'], 'utf8'),
+  );
   const openApiDocument = JSON.parse(threadsSource);
-  const threadsTypes = astToString(await openapiTS(pathToFileURL(sourceFiles['openapi/threads.json'])));
-  const wsEventTypes = astToString(await openapiTS(pathToFileURL(sourceFiles['openapi/ws-events.yaml'])));
+  const threadsTypes = normalizeNewlines(
+    astToString(await openapiTS(pathToFileURL(sourceFiles['openapi/threads.json']))),
+  );
+  const wsEventTypes = normalizeNewlines(
+    astToString(await openapiTS(pathToFileURL(sourceFiles['openapi/ws-events.yaml']))),
+  );
   const manifest = {
     name: 'threads-api-contract',
     version: openApiDocument.info.version,
@@ -47,7 +59,9 @@ let failed = false;
 for (const [relativePath, expected] of await generatedFiles()) {
   const outputPath = path.join(generatedDir, relativePath);
   if (check) {
-    const actual = await readFile(outputPath, 'utf8').catch(() => undefined);
+    const actual = await readFile(outputPath, 'utf8')
+      .then(normalizeNewlines)
+      .catch(() => undefined);
     if (actual !== expected) {
       console.error(`${path.relative(rootDir, outputPath)} is stale; run npm run contract:generate`);
       failed = true;
