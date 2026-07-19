@@ -281,7 +281,7 @@ func TestHandleEventInvokesOnAnyReactionToScopeBotMessage(t *testing.T) {
 	s := &fakeSender{}
 	d := Daemon{Store: st, Runner: r}
 	scope := config.Scope{ID: "s1", Threads: config.ThreadsConfig{UserID: "bot-1"}, Match: config.MatchConfig{ChannelIDs: []string{"*"}, ThreadIDs: []string{"*"}}}
-	event := threads.Event{ID: "e1", Type: "reaction_added", ChannelID: "c1", Emoji: "👍", Message: threads.Message{ID: "m1", SenderID: "bot-1"}}
+	event := threads.Event{ID: "e1", Type: "reaction_added", ChannelID: "c1", Emoji: "👍", ActorID: "user-1", Message: threads.Message{ID: "m1", SenderID: "bot-1"}}
 	if err := d.HandleEvent(context.Background(), scope, s, s, event); err != nil {
 		t.Fatal(err)
 	}
@@ -290,6 +290,25 @@ func TestHandleEventInvokesOnAnyReactionToScopeBotMessage(t *testing.T) {
 	}
 	if r.inputs[0].Event.Emoji != "👍" || r.inputs[0].ThreadID != "m1" {
 		t.Fatalf("bad reaction input: %+v", r.inputs[0])
+	}
+}
+
+func TestHandleEventSkipsScopeBotsOwnReaction(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	r := &fakeRunner{}
+	s := &fakeSender{}
+	d := Daemon{Store: st, Runner: r}
+	scope := config.Scope{ID: "s1", Threads: config.ThreadsConfig{UserID: "bot-1"}, Match: config.MatchConfig{ChannelIDs: []string{"*"}, ThreadIDs: []string{"*"}}}
+	event := threads.Event{ID: "e1", Type: "reaction_added", ChannelID: "c1", Emoji: "👋", ActorID: "bot-1", Message: threads.Message{ID: "m1", SenderID: "bot-1"}}
+	if err := d.HandleEvent(context.Background(), scope, s, s, event); err != nil {
+		t.Fatal(err)
+	}
+	if r.calls != 0 || len(s.sent) != 0 {
+		t.Fatalf("scope bot's own reaction should be ignored, calls=%d sent=%d", r.calls, len(s.sent))
 	}
 }
 

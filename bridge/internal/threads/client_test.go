@@ -23,6 +23,16 @@ func TestEventUnmarshalThreadsMessageEnvelope(t *testing.T) {
 	}
 }
 
+func TestEventUnmarshalReactionSeparatesActorFromMessageAuthor(t *testing.T) {
+	var event Event
+	if err := json.Unmarshal([]byte(`{"type":"reaction_added","channelId":"c1","messageId":"m1","userId":"bot-1","emoji":"👋"}`), &event); err != nil {
+		t.Fatal(err)
+	}
+	if event.ActorID != "bot-1" || event.Message.ID != "m1" || event.Message.SenderID != "" {
+		t.Fatalf("unexpected event: %+v", event)
+	}
+}
+
 func TestMaintainPresenceConnectsAndRespondsToPing(t *testing.T) {
 	gotAuth := make(chan string, 1)
 	gotPong := make(chan struct{}, 1)

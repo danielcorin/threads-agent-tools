@@ -163,8 +163,13 @@ func (d *Daemon) HandleEvent(ctx context.Context, scope config.Scope, sender Sen
 	if messageEvent && !scope.Matches(event.ChannelID, threadID) {
 		return nil
 	}
-	if reactionEvent && !reactionTargetsScope(scope, event.ChannelID, threadID, event.Message.SenderID) {
-		return nil
+	if reactionEvent {
+		if scope.Threads.UserID != "" && event.ActorID == scope.Threads.UserID {
+			return nil
+		}
+		if !reactionTargetsScope(scope, event.ChannelID, threadID, event.Message.SenderID) {
+			return nil
+		}
 	}
 	if messageEvent && scope.Threads.UserID != "" && event.Message.SenderID == scope.Threads.UserID {
 		return nil

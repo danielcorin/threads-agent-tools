@@ -11,6 +11,7 @@ type Event struct {
 	MessageID string         `json:"messageId"`
 	ProcessID string         `json:"processId"`
 	Emoji     string         `json:"emoji"`
+	ActorID   string         `json:"-"`
 	Metadata  map[string]any `json:"metadata"`
 	Message   Message        `json:"message"`
 }
@@ -19,6 +20,10 @@ type Message struct {
 	ID       string `json:"id"`
 	Content  string `json:"content"`
 	SenderID string `json:"senderId"`
+}
+
+func isReactionType(eventType string) bool {
+	return eventType == "reaction_added" || eventType == "reaction.created" || eventType == "reaction"
 }
 
 func (e *Event) UnmarshalJSON(data []byte) error {
@@ -82,6 +87,12 @@ func (e *Event) UnmarshalJSON(data []byte) error {
 	if e.Emoji == "" {
 		e.Emoji = raw.EmojiSnake
 	}
+	switch {
+	case raw.UserID != "":
+		e.ActorID = raw.UserID
+	case raw.UserIDSnake != "":
+		e.ActorID = raw.UserIDSnake
+	}
 	if e.Message.ID == "" {
 		switch {
 		case e.MessageID != "":
@@ -93,13 +104,8 @@ func (e *Event) UnmarshalJSON(data []byte) error {
 	if e.Message.Content == "" {
 		e.Message.Content = raw.Content
 	}
-	if e.Message.SenderID == "" {
-		switch {
-		case raw.UserID != "":
-			e.Message.SenderID = raw.UserID
-		case raw.UserIDSnake != "":
-			e.Message.SenderID = raw.UserIDSnake
-		}
+	if e.Message.SenderID == "" && !isReactionType(e.Type) {
+		e.Message.SenderID = e.ActorID
 	}
 	return nil
 }
