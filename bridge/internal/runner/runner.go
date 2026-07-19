@@ -494,12 +494,40 @@ func parsePiLimitEvent(obj map[string]any) (LimitEvent, bool) {
 
 func parseClaudeLimitEvent(obj map[string]any) (LimitEvent, bool) {
 	typeName := firstString(obj, "type")
-	if strings.Contains(typeName, "rate_limit") || strings.Contains(typeName, "usage_limit") {
-		msg := firstString(obj, "message", "error", "errorMessage", "error_message")
-		if msg == "" {
-			msg = "Claude limit event: " + typeName
+	if typeName == "rate_limit_event" {
+		info, _ := obj["rate_limit_info"].(map[string]any)
+		if info != nil {
+			status := firstString(info, "status")
+			severity := "warning"
+			switch status {
+			case "allowed":
+				return LimitEvent{}, false
+			case "allowed_warning":
+			case "rejected":
+				severity = "error"
+			default:
+				return LimitEvent{}, false
+			}
+			msg := "Claude rate limit " + strings.ReplaceAll(status, "_", " ")
+			if limitType := firstString(info, "rateLimitType", "rate_limit_type"); limitType != "" {
+				msg += ": " + strings.ReplaceAll(limitType, "_", " ")
+			}
+			return LimitEvent{Source: "claude-code", Message: msg, Severity: severity, Metadata: info}, true
 		}
-		return LimitEvent{Source: "claude-code", Message: msg, Severity: "warning", Metadata: obj}, true
+
+		// Preserve support for older Claude stream events that carried only a
+		// human-readable limit message.
+		msg := firstString(obj, "message", "error", "errorMessage", "error_message")
+		if containsLimitLanguage(msg) {
+			return LimitEvent{Source: "claude-code", Message: msg, Severity: "warning", Metadata: obj}, true
+		}
+		return LimitEvent{}, false
+	}
+	if strings.Contains(typeName, "usage_limit") {
+		msg := firstString(obj, "message", "error", "errorMessage", "error_message")
+		if containsLimitLanguage(msg) {
+			return LimitEvent{Source: "claude-code", Message: msg, Severity: "warning", Metadata: obj}, true
+		}
 	}
 	if typeName == "error" {
 		msg := firstString(obj, "message", "error", "errorMessage", "error_message")
@@ -508,6 +536,11 @@ func parseClaudeLimitEvent(obj map[string]any) (LimitEvent, bool) {
 		}
 	}
 	return LimitEvent{}, false
+}
+
+func containsLimitLanguage(message string) bool {
+	message = strings.ToLower(message)
+	return strings.Contains(message, "limit") || strings.Contains(message, "quota") || strings.Contains(message, "rate")
 }
 
 func percentFromNested(obj map[string]any, key string) float64 {
