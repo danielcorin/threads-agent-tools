@@ -12,8 +12,9 @@ go build -o bin/threads-agent-bridge ./cmd/threads-agent-bridge
 
 Keep local state and secrets out of git. The repository ignores `config.local.json`, `.secrets/`, `logs/`, `*.db`, `bin/`, and `dist/`.
 
-The canonical `threads` CLI is built in `danielcorin/threads`; this repository
-does not maintain another CLI implementation.
+The canonical `threads` CLI lives in the sibling `../cli` directory. Bridge
+prompt and packaging changes that depend on CLI behavior should update both
+components atomically.
 
 ## Pull requests
 
@@ -24,10 +25,9 @@ does not maintain another CLI implementation.
 
 ## Releases
 
-The coordinated release script in `danielcorin/threads` creates a draft bridge
-release pinned to an exact commit, then dispatches this repository's release
-workflow. The workflow downloads canonical assets from the public
-`danielcorin/threads-cli` release. To build the same archive set locally:
+The repository-root release workflow builds the CLI first, then passes those
+exact binaries to this component's packaging script. To build the same bridge
+archive set locally:
 
 ```bash
 THREADS_CLI_DIR=/path/to/threads-cli-assets scripts/build-release.sh v0.1.3

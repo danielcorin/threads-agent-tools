@@ -1,8 +1,16 @@
 {
   "schemaVersion": 1,
-  "version": "v0.1.0",
-  "source": "https://github.com/danielcorin/threads-cli/tree/v0.1.0",
-  "release": "https://github.com/danielcorin/threads-cli/releases/tag/v0.1.0",
-  "manifest": "https://github.com/danielcorin/threads-cli/releases/download/v0.1.0/threads-cli-manifest.json",
-  "checksums": "https://github.com/danielcorin/threads-cli/releases/download/v0.1.0/THREADS_CLI_SHA256SUMS"
+  "version": "v0.2.0",
+  "source": "https://github.com/danielcorin/threads-agent-tools/tree/v0.2.0",
+  "release": "https://github.com/danielcorin/threads-agent-tools/releases/tag/v0.2.0",
+  "manifest": "https://github.com/danielcorin/threads-agent-tools/releases/download/v0.2.0/threads-agent-tools-manifest.json",
+  "cli": {
+    "checksums": "https://github.com/danielcorin/threads-agent-tools/releases/download/v0.2.0/THREADS_CLI_SHA256SUMS"
+  },
+  "bridge": {
+    "checksums": "https://github.com/danielcorin/threads-agent-tools/releases/download/v0.2.0/THREADS_AGENT_BRIDGE_SHA256SUMS"
+  },
+  "contracts": {
+    "checksums": "https://github.com/danielcorin/threads-agent-tools/releases/download/v0.2.0/THREADS_CONTRACT_SHA256SUMS"
+  }
 }

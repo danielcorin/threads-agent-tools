@@ -1,9 +1,9 @@
 {
   "name": "@threads-space/cli",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
-  "description": "Open-source, contract-derived command-line client for Threads.",
+  "description": "Contract-derived command-line client from the Threads agent tools monorepo.",
   "bin": {
     "threads": "dist/cli.js"
   },

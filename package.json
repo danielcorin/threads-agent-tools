@@ -1,0 +1,17 @@
+{
+  "name": "@threads-space/agent-tools",
+  "private": true,
+  "version": "0.2.0",
+  "description": "Public Threads API contracts, CLI, and local agent bridge.",
+  "workspaces": [
+    "cli"
+  ],
+  "scripts": {
+    "artifact:build": "npm --prefix cli run artifact:build --",
+    "check": "npm run check:cli && npm run check:bridge",
+    "check:bridge": "go -C bridge test ./... && go -C bridge vet ./...",
+    "check:cli": "npm --prefix cli run check",
+    "contract:check": "npm --prefix cli run contract:check",
+    "contract:generate": "npm --prefix cli run contract:generate"
+  }
+}

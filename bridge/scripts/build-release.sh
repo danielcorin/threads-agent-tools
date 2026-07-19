@@ -18,11 +18,13 @@ fi
 
 THREADS_CLI_DIR=$(cd "$THREADS_CLI_DIR" && pwd)
 
-ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-cd "$ROOT"
+BRIDGE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+REPOSITORY_DIR=$(cd "$BRIDGE_DIR/.." && pwd)
+OUTPUT_DIR=${THREADS_BRIDGE_OUTPUT_DIR:-"$REPOSITORY_DIR/dist/bridge"}
+cd "$BRIDGE_DIR"
 
-rm -rf dist
-mkdir -p dist
+rm -rf "$OUTPUT_DIR"
+mkdir -p "$OUTPUT_DIR"
 
 targets=(
   darwin/arm64
@@ -35,7 +37,7 @@ for target in "${targets[@]}"; do
   os=${target%/*}
   arch=${target#*/}
   name="threads-agent-bridge_${VERSION}_${os}_${arch}"
-  out="dist/$name"
+  out="$OUTPUT_DIR/$name"
   mkdir -p "$out"
 
   echo "building $name"
@@ -59,20 +61,20 @@ for target in "${targets[@]}"; do
   cp "$THREADS_CLI_DIR/$cli_asset" "$out/threads"
   chmod 0755 "$out/threads"
 
-  cp README.md LICENSE config.example.json "$out/"
+  cp README.md "$REPOSITORY_DIR/LICENSE" config.example.json "$out/"
   if [[ -f "$THREADS_CLI_DIR/threads-cli-manifest.json" ]]; then
     cp "$THREADS_CLI_DIR/threads-cli-manifest.json" "$out/"
   fi
-  tar -C dist -czf "dist/$name.tar.gz" "$name"
+  tar -C "$OUTPUT_DIR" -czf "$OUTPUT_DIR/$name.tar.gz" "$name"
 done
 
 (
-  cd dist
+  cd "$OUTPUT_DIR"
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum threads-agent-bridge_${VERSION}_*.tar.gz > checksums.txt
+    sha256sum threads-agent-bridge_${VERSION}_*.tar.gz > THREADS_AGENT_BRIDGE_SHA256SUMS
   else
-    shasum -a 256 threads-agent-bridge_${VERSION}_*.tar.gz > checksums.txt
+    shasum -a 256 threads-agent-bridge_${VERSION}_*.tar.gz > THREADS_AGENT_BRIDGE_SHA256SUMS
   fi
 )
 
-echo "release assets written to dist/"
+echo "bridge release assets written to $OUTPUT_DIR"

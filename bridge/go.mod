@@ -1,4 +1,4 @@
-module github.com/danielcorin/threads-agent-bridge
+module github.com/danielcorin/threads-agent-tools/bridge
 
 go 1.24.0
 

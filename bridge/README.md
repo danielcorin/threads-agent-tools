@@ -1,11 +1,13 @@
 # Threads Agent Bridge
 
-[![CI](https://github.com/danielcorin/threads-agent-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/danielcorin/threads-agent-bridge/actions/workflows/ci.yml)
-[![Release](https://github.com/danielcorin/threads-agent-bridge/actions/workflows/release.yml/badge.svg)](https://github.com/danielcorin/threads-agent-bridge/actions/workflows/release.yml)
-[![Go Reference](https://pkg.go.dev/badge/github.com/danielcorin/threads-agent-bridge.svg)](https://pkg.go.dev/github.com/danielcorin/threads-agent-bridge)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![CI](https://github.com/danielcorin/threads-agent-tools/actions/workflows/ci.yml/badge.svg)](https://github.com/danielcorin/threads-agent-tools/actions/workflows/ci.yml)
+[![Release](https://github.com/danielcorin/threads-agent-tools/actions/workflows/release.yml/badge.svg)](https://github.com/danielcorin/threads-agent-tools/actions/workflows/release.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/danielcorin/threads-agent-tools/bridge.svg)](https://pkg.go.dev/github.com/danielcorin/threads-agent-tools/bridge)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](../LICENSE)
 
-Local single-binary daemon that connects Threads owner-scoped events to local agent CLIs (Codex, Claude Code, and Pi headless). Release archives also contain the canonical agent-facing `threads` CLI built from the public [`danielcorin/threads-cli`](https://github.com/danielcorin/threads-cli) source.
+Local single-binary daemon that connects Threads owner-scoped events to local
+agent CLIs (Codex, Claude Code, and Pi headless). Release archives contain the
+canonical agent-facing `threads` CLI built from the same public source commit.
 
 ## v0 shape
 
@@ -27,7 +29,9 @@ Local single-binary daemon that connects Threads owner-scoped events to local ag
 
 ## Quick start
 
-Download a release archive for your OS/arch from [GitHub Releases](https://github.com/danielcorin/threads-agent-bridge/releases), or run from source:
+Download a release archive for your OS/arch from
+[GitHub Releases](https://github.com/danielcorin/threads-agent-tools/releases),
+or run from this directory:
 
 ```bash
 cp config.example.json config.json
@@ -41,8 +45,8 @@ Build the daemon locally:
 go build -o bin/threads-agent-bridge ./cmd/threads-agent-bridge
 ```
 
-The `threads` executable is not implemented in this repository. Install it
-from a bridge release archive or a canonical Threads CLI release.
+The `threads` executable is implemented in [`../cli`](../cli). Install it as a
+standalone release artifact or use the copy bundled in each bridge archive.
 
 ## Development
 
@@ -55,10 +59,8 @@ CI runs formatting checks, `go vet`, `go test ./...`, and binary builds on every
 
 ## Releases
 
-Release archives are coordinated by the private Threads app after it verifies
-its public `threads-cli` submodule pin. This repository's workflow downloads
-the requested public CLI release directly, verifies its checksums, source
-manifest, and version, then builds `threads-agent-bridge` for:
+The repository-root release workflow builds the CLI and bridge from one tag and
+source commit, then builds `threads-agent-bridge` archives for:
 
 - `darwin/arm64`
 - `darwin/amd64`
@@ -72,12 +74,11 @@ assets, run:
 THREADS_CLI_DIR=/path/to/threads-cli-assets scripts/build-release.sh v0.1.3
 ```
 
-Release assets include four macOS/Linux daemon archives containing the matching
-public CLI plus its source/checksum manifests, `README.md`, `LICENSE`, and
-`config.example.json`. Standalone binaries for all five platforms and their
-build-provenance attestations remain on the public
-[`threads-cli` release](https://github.com/danielcorin/threads-cli/releases).
-Users must provide their own Threads bot token and local agent CLI credentials.
+The same release includes four macOS/Linux daemon archives containing the
+matching CLI plus its source manifest, `README.md`, `LICENSE`, and
+`config.example.json`; five standalone CLI binaries; checksums; contracts; and
+build-provenance attestations. Users must provide their own Threads bot token
+and local agent CLI credentials.
 
 ## Running as a macOS LaunchAgent
 

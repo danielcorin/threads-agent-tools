@@ -10,9 +10,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/danielcorin/threads-agent-bridge/internal/config"
-	"github.com/danielcorin/threads-agent-bridge/internal/daemon"
-	"github.com/danielcorin/threads-agent-bridge/internal/store"
+	"github.com/danielcorin/threads-agent-tools/bridge/internal/config"
+	"github.com/danielcorin/threads-agent-tools/bridge/internal/daemon"
+	"github.com/danielcorin/threads-agent-tools/bridge/internal/store"
 )
 
 func main() {

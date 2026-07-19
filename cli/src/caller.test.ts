@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import openApiSpec from '../openapi/threads.json';
+import openApiSpec from '../../contracts/threads.json';
 import {
   CallerContractError,
   CallerInputError,

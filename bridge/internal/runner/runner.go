@@ -12,8 +12,8 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/danielcorin/threads-agent-bridge/internal/config"
-	"github.com/danielcorin/threads-agent-bridge/internal/threads"
+	"github.com/danielcorin/threads-agent-tools/bridge/internal/config"
+	"github.com/danielcorin/threads-agent-tools/bridge/internal/threads"
 )
 
 type Input struct {

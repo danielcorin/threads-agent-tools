@@ -42,42 +42,48 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - run: npm run check
+      - run: npm run check:cli
       - name: Build native executable
         run: npm run artifact:build -- --target ${{ matrix.target }}
       - name: Attest native executable
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: dist/cli/${{ matrix.filename }}
+          subject-path: cli/dist/cli/${{ matrix.filename }}
       - name: Upload native executable
         uses: actions/upload-artifact@v4
         with:
           name: threads-cli-${{ matrix.target }}-${{ github.sha }}
-          path: dist/cli/${{ matrix.filename }}
+          path: cli/dist/cli/${{ matrix.filename }}
           if-no-files-found: error
 
   release:
-    name: Publish release
+    name: Publish unified release
     needs: cli
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.24.x'
+          cache-dependency-path: bridge/go.sum
       - uses: actions/download-artifact@v4
         with:
           pattern: threads-cli-*-${{ github.sha }}
-          path: dist/release
+          path: dist/cli
           merge-multiple: true
-      - name: Add contracts and provenance manifests
+      - name: Create CLI and contract manifests
         env:
           VERSION: ${{ github.ref_name }}
         run: |
-          cp openapi/threads.json dist/release/threads-openapi.json
-          cp openapi/ws-events.yaml dist/release/threads-ws-events.yaml
-          cd dist/release
+          cp contracts/threads.json dist/cli/threads-openapi.json
+          cp contracts/ws-events.yaml dist/cli/threads-ws-events.yaml
+          cd dist/cli
           sha256sum threads-darwin-* threads-linux-* threads-windows-* > THREADS_CLI_SHA256SUMS
           sha256sum threads-openapi.json threads-ws-events.yaml > THREADS_CONTRACT_SHA256SUMS
           files=$(jq -Rn '
@@ -101,24 +107,85 @@ jobs:
             --argjson contracts "$contracts" \
             '{name:$name,version:$version,gitSha:$gitSha,generatedAt:$generatedAt,source:$source,files:$files,contracts:$contracts}' \
             > threads-cli-manifest.json
-      - name: Smoke test Linux executable
+      - name: Test and build bridge archives
+        env:
+          THREADS_CLI_DIR: ${{ github.workspace }}/dist/cli
+        run: |
+          go -C bridge test ./...
+          go -C bridge vet ./...
+          bridge/scripts/build-release.sh "$GITHUB_REF_NAME"
+      - name: Create unified manifest
         env:
           VERSION: ${{ github.ref_name }}
         run: |
-          chmod 0755 dist/release/threads-linux-x64
-          dist/release/threads-linux-x64 --help >/dev/null
-          test "$(dist/release/threads-linux-x64 --version)" = "threads ${VERSION}"
+          cli=$(jq -Rn '
+            [inputs
+              | capture("^(?<sha256>[0-9a-f]+)  (?<file>.+)$")
+              | {file, sha256}]
+          ' < dist/cli/THREADS_CLI_SHA256SUMS)
+          contracts=$(jq -Rn '
+            [inputs
+              | capture("^(?<sha256>[0-9a-f]+)  (?<file>.+)$")
+              | {file, sha256}]
+          ' < dist/cli/THREADS_CONTRACT_SHA256SUMS)
+          bridge=$(jq -Rn '
+            [inputs
+              | capture("^(?<sha256>[0-9a-f]+)  (?<file>.+)$")
+              | {file, sha256}]
+          ' < dist/bridge/THREADS_AGENT_BRIDGE_SHA256SUMS)
+          generated_at=$(git show -s --format=%cI "$GITHUB_SHA")
+          jq -n \
+            --arg name threads-agent-tools \
+            --arg version "$VERSION" \
+            --arg gitSha "$GITHUB_SHA" \
+            --arg generatedAt "$generated_at" \
+            --arg source "https://github.com/${GITHUB_REPOSITORY}/tree/${GITHUB_SHA}" \
+            --argjson cli "$cli" \
+            --argjson bridge "$bridge" \
+            --argjson contracts "$contracts" \
+            '{name:$name,version:$version,gitSha:$gitSha,generatedAt:$generatedAt,source:$source,cli:$cli,bridge:$bridge,contracts:$contracts}' \
+            > dist/threads-agent-tools-manifest.json
+      - name: Smoke test release artifacts
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          chmod 0755 dist/cli/threads-linux-x64
+          dist/cli/threads-linux-x64 --help >/dev/null
+          test "$(dist/cli/threads-linux-x64 --version)" = "threads ${VERSION}"
           (
-            cd dist/release
+            cd dist/cli
             sha256sum --check THREADS_CLI_SHA256SUMS
             sha256sum --check THREADS_CONTRACT_SHA256SUMS
           )
+          (
+            cd dist/bridge
+            sha256sum --check THREADS_AGENT_BRIDGE_SHA256SUMS
+          )
+          tmp=$(mktemp -d)
+          tar -xzf "dist/bridge/threads-agent-bridge_${VERSION}_linux_amd64.tar.gz" -C "$tmp"
+          "$tmp/threads-agent-bridge_${VERSION}_linux_amd64/threads-agent-bridge" -h
+          test "$("$tmp/threads-agent-bridge_${VERSION}_linux_amd64/threads" --version)" = "threads ${VERSION}"
+          cmp "$tmp/threads-agent-bridge_${VERSION}_linux_amd64/threads" dist/cli/threads-linux-x64
+      - name: Attest bridge archives
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/bridge/threads-agent-bridge_*.tar.gz
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
-            dist/release/* \
+            dist/cli/threads-darwin-* \
+            dist/cli/threads-linux-* \
+            dist/cli/threads-windows-* \
+            dist/cli/threads-openapi.json \
+            dist/cli/threads-ws-events.yaml \
+            dist/cli/THREADS_CLI_SHA256SUMS \
+            dist/cli/THREADS_CONTRACT_SHA256SUMS \
+            dist/cli/threads-cli-manifest.json \
+            dist/bridge/threads-agent-bridge_*.tar.gz \
+            dist/bridge/THREADS_AGENT_BRIDGE_SHA256SUMS \
+            dist/threads-agent-tools-manifest.json \
             --verify-tag \
             --generate-notes \
-            --title "Threads CLI $GITHUB_REF_NAME"
+            --title "Threads Agent Tools $GITHUB_REF_NAME"

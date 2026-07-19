@@ -7,7 +7,8 @@ npm install
 npm run check
 ```
 
-API changes begin in `openapi/threads.json` or `openapi/ws-events.yaml`.
+API changes begin in `../contracts/threads.json` or
+`../contracts/ws-events.yaml`.
 Regenerate committed derived files with:
 
 ```bash

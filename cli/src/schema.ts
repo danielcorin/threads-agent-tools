@@ -1,4 +1,4 @@
-import openApiSpecJson from '../openapi/threads.json';
+import openApiSpecJson from '../../contracts/threads.json';
 import type { JsonSchema } from './contract.js';
 
 interface OpenApiDocument {

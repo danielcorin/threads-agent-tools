@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/danielcorin/threads-agent-bridge/internal/config"
-	"github.com/danielcorin/threads-agent-bridge/internal/runner"
-	"github.com/danielcorin/threads-agent-bridge/internal/store"
-	"github.com/danielcorin/threads-agent-bridge/internal/threads"
+	"github.com/danielcorin/threads-agent-tools/bridge/internal/config"
+	"github.com/danielcorin/threads-agent-tools/bridge/internal/runner"
+	"github.com/danielcorin/threads-agent-tools/bridge/internal/store"
+	"github.com/danielcorin/threads-agent-tools/bridge/internal/threads"
 )
 
 type fakeRunner struct {

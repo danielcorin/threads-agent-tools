@@ -48,11 +48,11 @@ await build({
 });
 
 // Publish only the stable caller declarations at the package root.
-const declarationSource = new URL('../dist/src/', import.meta.url);
+const declarationSource = new URL('../dist/cli/src/', import.meta.url);
 for (const file of ['index.d.ts', 'caller.d.ts', 'contract.d.ts', 'errors.d.ts']) {
   await copyFile(new URL(file, declarationSource), new URL(`../dist/${file}`, import.meta.url));
 }
-await rm(new URL('../dist/src/', import.meta.url), { force: true, recursive: true });
+await rm(new URL('../dist/cli/', import.meta.url), { force: true, recursive: true });
 await rm(new URL('../dist/generated/', import.meta.url), { force: true, recursive: true });
 
 await chmod(new URL('../dist/cli.js', import.meta.url), 0o755);

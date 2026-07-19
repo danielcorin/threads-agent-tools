@@ -2,9 +2,9 @@
 
 Open-source, contract-derived command-line client for Threads.
 
-The repository contains the complete source for the `threads` executable, the
-REST and WebSocket contracts used to generate its transport types, and the
-workflows that build every release binary.
+This directory contains the complete source for the `threads` executable. The
+repository-root contracts generate its transport types, and the unified release
+workflow builds it alongside the matching Threads agent bridge.
 
 ## Trust and provenance
 
@@ -23,7 +23,7 @@ instance-local contract URLs at `/api/cli.json`.
 Inspect this source, build it yourself, or verify a downloaded artifact with:
 
 ```bash
-gh attestation verify threads-darwin-arm64 --repo danielcorin/threads-cli
+gh attestation verify threads-darwin-arm64 --repo danielcorin/threads-agent-tools
 shasum -a 256 --check THREADS_CLI_SHA256SUMS
 ```
 
@@ -52,14 +52,15 @@ npm run artifact:build -- --target host
 
 The committed API inputs are:
 
-- `openapi/threads.json`
-- `openapi/ws-events.yaml`
+- `../contracts/threads.json`
+- `../contracts/ws-events.yaml`
 
 After updating either document, run `npm run contract:generate`. CI checks that
 the generated JSON and TypeScript declarations are current.
 
 ## Releases
 
-Pushing a semantic `vX.Y.Z` tag runs tests, builds each executable on its native
-platform, attests the outputs, verifies the Linux binary version, and publishes
-one GitHub release containing the binaries, contracts, manifests, and checksums.
+Pushing a semantic `vX.Y.Z` tag at the repository root runs tests, builds each
+executable on its native platform, attests the outputs, verifies the Linux
+binary version, packages the matching bridge archives, and publishes one
+coordinated GitHub release.

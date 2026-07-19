@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/danielcorin/threads-agent-bridge/internal/config"
-	"github.com/danielcorin/threads-agent-bridge/internal/threads"
+	"github.com/danielcorin/threads-agent-tools/bridge/internal/config"
+	"github.com/danielcorin/threads-agent-tools/bridge/internal/threads"
 )
 
 func TestParseStructuredOutput(t *testing.T) {

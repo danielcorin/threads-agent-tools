@@ -7,11 +7,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import openapiTS, { astToString } from 'openapi-typescript';
 
-const rootDir = fileURLToPath(new URL('..', import.meta.url));
-const generatedDir = path.join(rootDir, 'generated');
+const cliDir = fileURLToPath(new URL('..', import.meta.url));
+const repositoryDir = path.resolve(cliDir, '..');
+const generatedDir = path.join(cliDir, 'generated');
 const sourceFiles = {
-  'openapi/threads.json': path.join(rootDir, 'openapi', 'threads.json'),
-  'openapi/ws-events.yaml': path.join(rootDir, 'openapi', 'ws-events.yaml'),
+  'contracts/threads.json': path.join(repositoryDir, 'contracts', 'threads.json'),
+  'contracts/ws-events.yaml': path.join(repositoryDir, 'contracts', 'ws-events.yaml'),
 };
 
 function sha256(value) {
@@ -24,17 +25,17 @@ function normalizeNewlines(value) {
 
 async function generatedFiles() {
   const threadsSource = normalizeNewlines(
-    await readFile(sourceFiles['openapi/threads.json'], 'utf8'),
+    await readFile(sourceFiles['contracts/threads.json'], 'utf8'),
   );
   const wsEventsSource = normalizeNewlines(
-    await readFile(sourceFiles['openapi/ws-events.yaml'], 'utf8'),
+    await readFile(sourceFiles['contracts/ws-events.yaml'], 'utf8'),
   );
   const openApiDocument = JSON.parse(threadsSource);
   const threadsTypes = normalizeNewlines(
-    astToString(await openapiTS(pathToFileURL(sourceFiles['openapi/threads.json']))),
+    astToString(await openapiTS(pathToFileURL(sourceFiles['contracts/threads.json']))),
   );
   const wsEventTypes = normalizeNewlines(
-    astToString(await openapiTS(pathToFileURL(sourceFiles['openapi/ws-events.yaml']))),
+    astToString(await openapiTS(pathToFileURL(sourceFiles['contracts/ws-events.yaml']))),
   );
   const manifest = {
     name: 'threads-api-contract',
@@ -42,7 +43,7 @@ async function generatedFiles() {
     files: Object.fromEntries(
       Object.entries({ ...sourceFiles }).map(([name]) => [
         name,
-        { sha256: sha256(name === 'openapi/threads.json' ? threadsSource : wsEventsSource) },
+        { sha256: sha256(name === 'contracts/threads.json' ? threadsSource : wsEventsSource) },
       ]),
     ),
   };
@@ -63,13 +64,13 @@ for (const [relativePath, expected] of await generatedFiles()) {
       .then(normalizeNewlines)
       .catch(() => undefined);
     if (actual !== expected) {
-      console.error(`${path.relative(rootDir, outputPath)} is stale; run npm run contract:generate`);
+      console.error(`${path.relative(repositoryDir, outputPath)} is stale; run npm run contract:generate`);
       failed = true;
     }
   } else {
     await mkdir(path.dirname(outputPath), { recursive: true });
     await writeFile(outputPath, expected);
-    console.log(`generated ${path.relative(rootDir, outputPath)}`);
+    console.log(`generated ${path.relative(repositoryDir, outputPath)}`);
   }
 }
 
