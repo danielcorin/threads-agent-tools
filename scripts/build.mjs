@@ -6,7 +6,7 @@ import { build } from 'esbuild';
 import { resolveArtifactMetadata } from './artifact-metadata.mjs';
 
 const callerDir = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
-const rootDir = path.resolve(callerDir, '..');
+const rootDir = callerDir;
 const metadata = resolveArtifactMetadata({ rootDir });
 const cliDefine = {
   __THREADS_CLI_VERSION__: JSON.stringify(metadata.version),
