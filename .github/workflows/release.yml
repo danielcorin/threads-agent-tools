@@ -46,7 +46,7 @@ jobs:
       - name: Build native executable
         run: npm run artifact:build -- --target ${{ matrix.target }}
       - name: Attest native executable
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: cli/dist/cli/${{ matrix.filename }}
       - name: Upload native executable
@@ -167,7 +167,7 @@ jobs:
           test "$("$tmp/threads-agent-bridge_${VERSION}_linux_amd64/threads" --version)" = "threads ${VERSION}"
           cmp "$tmp/threads-agent-bridge_${VERSION}_linux_amd64/threads" dist/cli/threads-linux-x64
       - name: Attest bridge archives
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: dist/bridge/threads-agent-bridge_*.tar.gz
       - name: Publish GitHub release
