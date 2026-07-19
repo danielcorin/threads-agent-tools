@@ -2,14 +2,21 @@
 set -euo pipefail
 
 VERSION=${1:-${GITHUB_REF_NAME:-}}
+THREADS_CLI_DIR=${THREADS_CLI_DIR:-${2:-}}
 if [[ -z "$VERSION" ]]; then
-  echo "usage: $0 <version>" >&2
+  echo "usage: THREADS_CLI_DIR=/path/to/assets $0 <version>" >&2
   exit 2
 fi
 if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][A-Za-z0-9._-]+)?$ ]]; then
   echo "version must look like v0.1.2 (got: $VERSION)" >&2
   exit 2
 fi
+if [[ -z "$THREADS_CLI_DIR" || ! -d "$THREADS_CLI_DIR" ]]; then
+  echo "THREADS_CLI_DIR must point to downloaded canonical Threads CLI assets" >&2
+  exit 2
+fi
+
+THREADS_CLI_DIR=$(cd "$THREADS_CLI_DIR" && pwd)
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT"
@@ -34,10 +41,28 @@ for target in "${targets[@]}"; do
   echo "building $name"
   GOOS=$os GOARCH=$arch CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" \
     -o "$out/threads-agent-bridge" ./cmd/threads-agent-bridge
-  GOOS=$os GOARCH=$arch CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" \
-    -o "$out/threads" ./cmd/threads
+
+  case "$target" in
+    darwin/arm64) cli_asset="threads-darwin-arm64" ;;
+    darwin/amd64) cli_asset="threads-darwin-x64" ;;
+    linux/amd64) cli_asset="threads-linux-x64" ;;
+    linux/arm64) cli_asset="threads-linux-arm64" ;;
+    *)
+      echo "no canonical Threads CLI mapping for $target" >&2
+      exit 2
+      ;;
+  esac
+  if [[ ! -f "$THREADS_CLI_DIR/$cli_asset" ]]; then
+    echo "missing canonical Threads CLI asset: $THREADS_CLI_DIR/$cli_asset" >&2
+    exit 2
+  fi
+  cp "$THREADS_CLI_DIR/$cli_asset" "$out/threads"
+  chmod 0755 "$out/threads"
 
   cp README.md LICENSE config.example.json "$out/"
+  if [[ -f "$THREADS_CLI_DIR/threads-cli-manifest.json" ]]; then
+    cp "$THREADS_CLI_DIR/threads-cli-manifest.json" "$out/"
+  fi
   tar -C dist -czf "dist/$name.tar.gz" "$name"
 done
 

@@ -214,7 +214,7 @@ func (d *Daemon) HandleEvent(ctx context.Context, scope config.Scope, sender Sen
 		if status == "killed" {
 			return nil
 		}
-		if sendErr := sender.SendMessage(context.WithoutCancel(ctx), event.ChannelID, threads.SendMessageRequest{Content: runnerErrorMessage(err), ThreadID: threadID, MessageType: "error", Metadata: map[string]any{"source": "threads-agent-bridge", "kind": "error", "scope_id": scope.ID, "process_id": processID}}); sendErr != nil {
+		if sendErr := sender.SendMessage(context.WithoutCancel(ctx), event.ChannelID, threads.SendMessageRequest{Content: runnerErrorMessage(err), ThreadID: threadID, MessageType: "progress", Metadata: map[string]any{"source": "threads-agent-bridge", "kind": "error", "severity": "error", "scope_id": scope.ID, "process_id": processID}}); sendErr != nil {
 			if d.Logger != nil {
 				d.Logger.Warn("send runner error", "scope", scope.ID, "error", sendErr)
 			}
@@ -318,10 +318,6 @@ func (d *Daemon) limitEventHandler(scope config.Scope, sender Sender, processes 
 		if processes != nil {
 			_ = processes.RecordProcessActivity(context.WithoutCancel(ctx), processID, threads.ProcessActivityRequest{Type: "status"})
 		}
-		messageType := "progress"
-		if limitEvent.Severity == "error" {
-			messageType = "error"
-		}
 		metadata := map[string]any{
 			"source":     "threads-agent-bridge",
 			"kind":       "runner_limit",
@@ -334,7 +330,7 @@ func (d *Daemon) limitEventHandler(scope config.Scope, sender Sender, processes 
 		for key, value := range limitEvent.Metadata {
 			metadata[key] = value
 		}
-		err := sender.SendMessage(ctx, event.ChannelID, threads.SendMessageRequest{Content: formatLimitEvent(limitEvent), ThreadID: threadID, MessageType: messageType, Metadata: metadata})
+		err := sender.SendMessage(ctx, event.ChannelID, threads.SendMessageRequest{Content: formatLimitEvent(limitEvent), ThreadID: threadID, MessageType: "progress", Metadata: metadata})
 		if err != nil && d.Logger != nil {
 			d.Logger.Warn("send limit event", "scope", scope.ID, "provider", limitEvent.Source, "error", err)
 		}

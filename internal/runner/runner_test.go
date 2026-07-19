@@ -229,7 +229,7 @@ func TestParsePiMessageUpdateToolCallEvents(t *testing.T) {
 }
 
 func TestParseCodexFallbackUsesLastAgentMessage(t *testing.T) {
-	got := parseJSONLText([]byte("{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"first progress chunk\"}}\n{\"type\":\"item.completed\",\"item\":{\"type\":\"command_execution\",\"command\":\"threads send --content update\"}}\n{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"final summary\"}}\n"))
+	got := parseJSONLText([]byte("{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"first progress chunk\"}}\n{\"type\":\"item.completed\",\"item\":{\"type\":\"command_execution\",\"command\":\"threads messages send --channel-id ch1 --content update\"}}\n{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"final summary\"}}\n"))
 	if got != "final summary" {
 		t.Fatalf("got %q", got)
 	}
@@ -272,7 +272,7 @@ func TestBuildResumeArgs(t *testing.T) {
 
 func TestBuildPromptDocumentsThreadsSendAsInterimOnly(t *testing.T) {
 	prompt := buildPrompt(config.Scope{}, Input{Event: threads.Event{Message: threads.Message{Content: "ship it"}}})
-	if !strings.Contains(prompt, "threads send --content") || !strings.Contains(prompt, "threads react") || !strings.Contains(prompt, "still write your final answer to stdout") || !strings.Contains(prompt, "ship it") {
+	if !strings.Contains(prompt, "threads messages send --channel-id") || !strings.Contains(prompt, "--message-type progress") || !strings.Contains(prompt, "threads reactions add") || !strings.Contains(prompt, "threads messages title") || !strings.Contains(prompt, "still write your final answer to stdout") || !strings.Contains(prompt, "ship it") {
 		t.Fatalf("prompt missing CLI contract: %q", prompt)
 	}
 }
@@ -339,7 +339,7 @@ func TestAgentEnvInjectsThreadsContext(t *testing.T) {
 	scope := config.Scope{ID: "s1", Threads: config.ThreadsConfig{BaseURL: "http://threads", Token: "tok"}, Runner: config.RunnerConfig{WorkingDir: "/workspace"}}
 	event := threads.Event{ChannelID: "ch1", ThreadID: "ignored-reply-id", Message: threads.Message{ID: "m1"}}
 	got := agentEnv(scope, Input{ScopeID: "s1", Event: event, ThreadID: "root-thread", RunnerSessionID: "runner-session"})
-	wantContains := []string{"PATH=/workspace/bin:/bin", "THREADS_BASE_URL=http://threads", "THREADS_API_TOKEN=tok", "THREADS_CHANNEL_ID=ch1", "THREADS_THREAD_ID=root-thread", "THREADS_MESSAGE_ID=m1", "THREADS_SCOPE_ID=s1", "THREADS_RUNNER_SESSION_ID=runner-session"}
+	wantContains := []string{"PATH=/workspace/bin:/bin", "THREADS_BASE_URL=http://threads", "THREADS_API_TOKEN=tok", "THREADS_API=http://threads", "THREADS_TOKEN=tok", "THREADS_CHANNEL_ID=ch1", "THREADS_THREAD_ID=root-thread", "THREADS_MESSAGE_ID=m1", "THREADS_SCOPE_ID=s1", "THREADS_RUNNER_SESSION_ID=runner-session"}
 	for _, want := range wantContains {
 		found := false
 		for _, value := range got {

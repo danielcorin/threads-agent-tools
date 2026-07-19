@@ -8,10 +8,12 @@ Thanks for helping improve Threads Agent Bridge.
 go test ./...
 go vet ./...
 go build -o bin/threads-agent-bridge ./cmd/threads-agent-bridge
-go build -o bin/threads ./cmd/threads
 ```
 
 Keep local state and secrets out of git. The repository ignores `config.local.json`, `.secrets/`, `logs/`, `*.db`, `bin/`, and `dist/`.
+
+The canonical `threads` CLI is built in `danielcorin/threads`; this repository
+does not maintain another CLI implementation.
 
 ## Pull requests
 
@@ -22,8 +24,10 @@ Keep local state and secrets out of git. The repository ignores `config.local.js
 
 ## Releases
 
-Release artifacts are built by GitHub Actions when a `vX.Y.Z` tag is pushed. To build the same archive set locally:
+The coordinated release script in `danielcorin/threads` creates a draft bridge
+release containing canonical CLI assets, then dispatches this repository's
+release workflow. To build the same archive set locally:
 
 ```bash
-scripts/build-release.sh v0.1.2
+THREADS_CLI_DIR=/path/to/threads-cli-assets scripts/build-release.sh v0.1.3
 ```

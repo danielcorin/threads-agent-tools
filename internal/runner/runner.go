@@ -255,10 +255,12 @@ func buildBridgeInstructions(scope config.Scope, input Input) string {
 	} else {
 		b.WriteString("This is a reply in an existing Threads thread; continue the existing agent conversation/session.\n")
 	}
-	b.WriteString("The current Threads context is available in environment variables: THREADS_BASE_URL, THREADS_API_TOKEN, THREADS_CHANNEL_ID, THREADS_THREAD_ID, THREADS_MESSAGE_ID, THREADS_SCOPE_ID, THREADS_RUNNER_SESSION_ID, and THREADS_REACTION_EMOJI when applicable.\n")
-	b.WriteString("If useful, send interim progress or artifact messages before your final answer with: threads send --content \"...\".\n")
-	b.WriteString("You can react to any Threads message by id with: threads react --message-id \"$THREADS_MESSAGE_ID\" --emoji \"👍\". Replace $THREADS_MESSAGE_ID with another message id when you need to react elsewhere.\n")
-	b.WriteString("Treat `threads send` and `threads react` as side effects only; still write your final answer to stdout when finished so the bridge can post the final response.\n")
+	b.WriteString("The current Threads context is available in environment variables: THREADS_API, THREADS_TOKEN, THREADS_CHANNEL_ID, THREADS_THREAD_ID, THREADS_MESSAGE_ID, THREADS_SCOPE_ID, THREADS_RUNNER_SESSION_ID, and THREADS_REACTION_EMOJI when applicable.\n")
+	b.WriteString("If useful, send interim progress before your final answer with: threads messages send --channel-id \"$THREADS_CHANNEL_ID\" --thread-id \"$THREADS_THREAD_ID\" --content \"...\" --message-type progress --metadata '{\"source\":\"threads-agent-bridge\",\"kind\":\"interim\"}'.\n")
+	b.WriteString("Attach a local artifact by adding a repeatable --file or --image path to `threads messages send`.\n")
+	b.WriteString("You can react to any Threads message by id with: threads reactions add --message-id \"$THREADS_MESSAGE_ID\" --emoji \"👍\". Replace $THREADS_MESSAGE_ID with another message id when you need to react elsewhere.\n")
+	b.WriteString("You can explicitly title a thread with: threads messages title --message-id \"$THREADS_THREAD_ID\" --title \"...\" --if-unset true.\n")
+	b.WriteString("Treat `threads messages send`, `threads reactions add`, and `threads messages title` as side effects only; still write your final answer to stdout when finished so the bridge can post the final response.\n")
 	if input.Event.Emoji != "" {
 		b.WriteString("This run was invoked by an emoji reaction. THREADS_REACTION_EMOJI contains the triggering emoji, and THREADS_MESSAGE_ID is the reacted-to message.\n")
 	}
@@ -299,6 +301,8 @@ func agentEnv(scope config.Scope, input Input) []string {
 	token, _ := scope.Token()
 	add("THREADS_BASE_URL", scope.Threads.BaseURL)
 	add("THREADS_API_TOKEN", token)
+	add("THREADS_API", scope.Threads.BaseURL)
+	add("THREADS_TOKEN", token)
 	add("THREADS_CHANNEL_ID", input.Event.ChannelID)
 	add("THREADS_THREAD_ID", input.ThreadID)
 	add("THREADS_MESSAGE_ID", input.Event.Message.ID)

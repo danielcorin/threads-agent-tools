@@ -1,11 +1,11 @@
 # Threads Agent Bridge
 
-[![CI](https://github.com/filaebot/threads-agent-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/filaebot/threads-agent-bridge/actions/workflows/ci.yml)
-[![Release](https://github.com/filaebot/threads-agent-bridge/actions/workflows/release.yml/badge.svg)](https://github.com/filaebot/threads-agent-bridge/actions/workflows/release.yml)
+[![CI](https://github.com/danielcorin/threads-agent-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/danielcorin/threads-agent-bridge/actions/workflows/ci.yml)
+[![Release](https://github.com/danielcorin/threads-agent-bridge/actions/workflows/release.yml/badge.svg)](https://github.com/danielcorin/threads-agent-bridge/actions/workflows/release.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/danielcorin/threads-agent-bridge.svg)](https://pkg.go.dev/github.com/danielcorin/threads-agent-bridge)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-Local single-binary daemon that connects Threads owner-scoped events to local agent CLIs (Codex, Claude Code, and Pi headless), plus a narrow agent-facing `threads` CLI for emitting Threads messages during a run.
+Local single-binary daemon that connects Threads owner-scoped events to local agent CLIs (Codex, Claude Code, and Pi headless). Release archives also contain the canonical agent-facing `threads` CLI produced by the private Threads application repository.
 
 ## v0 shape
 
@@ -18,8 +18,8 @@ Local single-binary daemon that connects Threads owner-scoped events to local ag
 - Codex runs through `codex exec --json` by default, captures `thread_id`, and resumes replies with `codex exec ... resume --json <thread_id> -`.
 - Claude Code runs through `claude -p --verbose --output-format stream-json`, captures `session_id`, and resumes replies with `--resume <session_id>`; if `claude` is not installed on PATH, use `npx -y @anthropic-ai/claude-code` as the command and keep the Claude flags in `runner.args`.
 - Pi runs through `pi --mode json --print`, captures the emitted `sessionFile`, and resumes replies with `--session <sessionFile>`. Pi JSON `tool_execution_*` events stream into the same Threads tool-call UI.
-- Runner subprocesses receive `THREADS_BASE_URL`, `THREADS_API_TOKEN`, `THREADS_CHANNEL_ID`, `THREADS_THREAD_ID`, `THREADS_MESSAGE_ID`, `THREADS_SCOPE_ID`, and `THREADS_RUNNER_SESSION_ID` so they can call the companion `threads` CLI.
-- `threads send` posts immediate side-effect/interim messages and can attach files/images through Threads uploads. Final answers remain stdout from the runner; the bridge posts that stdout once the runner exits.
+- Runner subprocesses receive canonical `THREADS_API` / `THREADS_TOKEN` credentials plus channel, thread, message, scope, and runner-session context so they can call the bundled `threads` CLI. Legacy `THREADS_BASE_URL` / `THREADS_API_TOKEN` aliases remain available to runner scripts.
+- `threads messages send` posts immediate side-effect/interim messages and can attach files/images through Threads uploads. Final answers remain stdout from the runner; the bridge posts that stdout once the runner exits.
 - With `runner.auto_title: true` and structured output enabled, the first root-message inference can return `thread_title`; the bridge applies it with guarded set-if-empty semantics so it cannot overwrite an existing human title.
 - The daemon creates a Threads process as soon as a run starts, marks the triggering message `processing`, and updates the process/message to `done`, `error`, or `killed` when the run exits.
 - Clicking the `x` in the Threads tool-call/process UI sends a process kill event; the bridge maps that process id to the active local subprocess context and cancels/kills the Codex, Claude Code, or Pi loop.
@@ -27,7 +27,7 @@ Local single-binary daemon that connects Threads owner-scoped events to local ag
 
 ## Quick start
 
-Download a release archive for your OS/arch from [GitHub Releases](https://github.com/filaebot/threads-agent-bridge/releases), or run from source:
+Download a release archive for your OS/arch from [GitHub Releases](https://github.com/danielcorin/threads-agent-bridge/releases), or run from source:
 
 ```bash
 cp config.example.json config.json
@@ -35,12 +35,14 @@ cp config.example.json config.json
 go run ./cmd/threads-agent-bridge -config config.json
 ```
 
-Build the binaries locally:
+Build the daemon locally:
 
 ```bash
 go build -o bin/threads-agent-bridge ./cmd/threads-agent-bridge
-go build -o bin/threads ./cmd/threads
 ```
+
+The `threads` executable is not implemented in this repository. Install it
+from a bridge release archive or a canonical Threads CLI release.
 
 ## Development
 
@@ -53,27 +55,29 @@ CI runs formatting checks, `go vet`, `go test ./...`, and binary builds on every
 
 ## Releases
 
-Release archives are produced by GitHub Actions when a semantic version tag is pushed:
-
-```bash
-git tag v0.1.2
-git push origin v0.1.2
-```
-
-The release workflow builds `threads-agent-bridge` and `threads` for:
+Release archives are coordinated by
+`danielcorin/threads/scripts/release-cli-and-bridge.sh`. The script stages the
+five canonical CLI executables on a draft bridge release, then dispatches this
+repository's release workflow. The workflow verifies their checksums and
+version before building `threads-agent-bridge` for:
 
 - `darwin/arm64`
 - `darwin/amd64`
 - `linux/amd64`
 - `linux/arm64`
 
-To build the same archive set locally, run:
+To build the same archive set locally from previously downloaded canonical CLI
+assets, run:
 
 ```bash
-scripts/build-release.sh v0.1.2
+THREADS_CLI_DIR=/path/to/threads-cli-assets scripts/build-release.sh v0.1.3
 ```
 
-Release assets include `README.md`, `LICENSE`, `config.example.json`, and `checksums.txt`. Users must provide their own Threads bot token and local agent CLI credentials.
+Release assets include the raw canonical CLI executables for all five
+platforms, four macOS/Linux daemon archives containing the matching CLI,
+provenance/checksum manifests, `README.md`, `LICENSE`, and
+`config.example.json`. Users must provide their own Threads bot token and local
+agent CLI credentials.
 
 ## Running as a macOS LaunchAgent
 
@@ -96,28 +100,42 @@ If the bridge appears unresponsive, first check that the LaunchAgent exists and 
 
 ## Agent-facing Threads CLI
 
-`threads` is intentionally narrow. It exists so local tools/agents can publish progress or artifacts before their loop is finished without taking over final-response handling.
+The bundled canonical `threads` CLI exposes the full curated Threads action
+catalog. The bridge prompt uses only a few side-effect operations so local
+tools/agents can publish progress or artifacts before their loop is finished
+without taking over final-response handling.
 
 ```bash
-threads send --content "Working on it..."
-echo "Found the failing test" | threads send --type agent_update
-threads send --channel ch_123 --thread msg_123 --content "Still running"
-threads send --content "Log attached" --file ./test.log
-threads send --content "Screenshot" --image ./screenshot.png
-threads send --attachment-ids att_123,att_456
-threads react --emoji "✅"
-threads react --message msg_123 --emoji "👀"
-threads react --message-id msg_456 --emoji "🚀"
-threads title --title "Investigate WebSocket reconnects"
-threads title --message-id msg_456 --title "Release v2 follow-ups"
-threads title --title "Generated first title" --if-unset
+threads messages send --channel-id "$THREADS_CHANNEL_ID" --thread-id "$THREADS_THREAD_ID" --content "Working on it..." --message-type progress
+echo "Found the failing test" | threads messages send --channel-id "$THREADS_CHANNEL_ID" --thread-id "$THREADS_THREAD_ID" --message-type progress
+threads messages send --channel-id ch_123 --thread-id msg_123 --content "Still running" --message-type progress
+threads messages send --channel-id "$THREADS_CHANNEL_ID" --thread-id "$THREADS_THREAD_ID" --content "Log attached" --file ./test.log --message-type progress
+threads messages send --channel-id "$THREADS_CHANNEL_ID" --thread-id "$THREADS_THREAD_ID" --content "Screenshot" --image ./screenshot.png --message-type progress
+threads messages send --channel-id "$THREADS_CHANNEL_ID" --thread-id "$THREADS_THREAD_ID" --attachment-ids att_123,att_456 --message-type progress
+threads reactions add --message-id "$THREADS_MESSAGE_ID" --emoji "✅"
+threads reactions add --message-id msg_456 --emoji "🚀"
+threads messages title --message-id "$THREADS_THREAD_ID" --title "Investigate WebSocket reconnects"
+threads messages title --message-id msg_456 --title "Release v2 follow-ups"
+threads messages title --message-id "$THREADS_THREAD_ID" --title "Generated first title" --if-unset true
 ```
 
-`threads send` reads defaults from `THREADS_BASE_URL`, `THREADS_API_TOKEN`, `THREADS_CHANNEL_ID`, and `THREADS_THREAD_ID`, which the bridge injects into runner subprocesses. For top-level messages, `THREADS_THREAD_ID` is normalized to the root message id so interim and final responses land in the same Threads thread. The command defaults to `message_type: "agent_update"` and metadata `{source:"threads-cli", kind:"interim"}`. `--file` and `--image` may be repeated; each path is uploaded to `POST /uploads`, then the returned attachment IDs are included when posting the message. `--attachment-ids` can reuse already-uploaded IDs, and attachment-only messages are allowed. The agent should still write its final answer to stdout; the daemon posts stdout as the final `response` message.
+The bridge injects `THREADS_API`, `THREADS_TOKEN`, `THREADS_CHANNEL_ID`,
+`THREADS_THREAD_ID`, and `THREADS_MESSAGE_ID`. For top-level messages,
+`THREADS_THREAD_ID` is normalized to the root message id so interim and final
+responses land in the same Threads thread. Use the contract-defined `progress`
+message type for interim updates. `--file` and `--image` may be repeated; each
+path is uploaded to `POST /uploads`, then the returned attachment IDs are
+included when posting the message. `--attachment-ids` can reuse already
+uploaded IDs, and attachment-only messages are allowed. The agent should still
+write its final answer to stdout; the daemon posts stdout as the final
+`response` message.
 
-`threads react` reads `THREADS_BASE_URL`, `THREADS_API_TOKEN`, and `THREADS_MESSAGE_ID`; by default it reacts to the message that triggered the current run. Agents can react to any visible Threads message by passing `--message <id>` or `--message-id <id>`.
+`threads reactions add` requires the target `--message-id`; use
+`$THREADS_MESSAGE_ID` for the message that triggered the current run.
 
-`threads title` reads `THREADS_BASE_URL`, `THREADS_API_TOKEN`, and `THREADS_THREAD_ID`; by default it targets the normalized root message for the current run. Pass `--message` or `--message-id` to target another root or reply. `--if-unset` makes the update safe for automatic titles by preserving any existing title.
+`threads messages title` requires a root or reply `--message-id`. Use
+`$THREADS_THREAD_ID` for the normalized root. `--if-unset true` makes the
+update safe for automatic titles by preserving any existing title.
 
 Tool-call streaming and process lifecycle are bridge-owned. Agents do not need to know the Threads UI schema: Codex `command_execution` JSONL items, Claude Code `tool_use`/`tool_result` stream-json events, and Pi `tool_execution_*` JSON events are translated into hidden/intermediate Threads step messages by the daemon. Runner usage/limit signals are surfaced too: Codex `rate_limits` JSONL, Claude rate/usage-limit JSON events, and Pi provider usage/error messages become `runner_limit` status messages in the same Threads thread. The daemon also records `process.activity` counts for tool calls, runner status, and replies so the Threads process list reflects local CLI work.
 

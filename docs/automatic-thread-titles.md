@@ -81,7 +81,7 @@ finishes. A separate early-title inference is a possible later optimization.
 ### The bridge owns the write
 
 The runner proposes a value; the bridge calls the Threads API. This is more
-reliable than prompting the agent to execute `threads title` because:
+reliable than prompting the agent to execute `threads messages title` because:
 
 - Claude Code plan mode may prohibit the required shell call.
 - Pi read-only mode may not expose `bash`.
@@ -345,14 +345,14 @@ being torn down.
 Add:
 
 ```text
-threads title --title <title> [--message-id <id>] [--if-unset]
+threads messages title --message-id <id> --title <title> [--if-unset true]
 ```
 
-Defaults:
+Bridge-provided context:
 
-- Base URL: `THREADS_BASE_URL`
-- Token: `THREADS_API_TOKEN`
-- Message ID: `THREADS_THREAD_ID`
+- Base URL: `THREADS_API`
+- Token: `THREADS_TOKEN`
+- Root message ID: `THREADS_THREAD_ID` (pass it with `--message-id`)
 
 `THREADS_THREAD_ID` is preferred over `THREADS_MESSAGE_ID` because it is already
 normalized to the root. The API accepts either value, so `--message` and
@@ -361,9 +361,9 @@ normalized to the root. The API accepts either value, so `--message` and
 Examples:
 
 ```bash
-threads title --title "Investigate WebSocket reconnects"
-threads title --message-id msg_123 --title "Release v2 follow-ups"
-threads title --title "Investigate WebSocket reconnects" --if-unset
+threads messages title --message-id "$THREADS_THREAD_ID" --title "Investigate WebSocket reconnects"
+threads messages title --message-id msg_123 --title "Release v2 follow-ups"
+threads messages title --message-id "$THREADS_THREAD_ID" --title "Investigate WebSocket reconnects" --if-unset true
 ```
 
 The command is useful for explicit agent actions and scripts. Automatic title
@@ -448,7 +448,7 @@ The websocket title event provides the UI update.
 ## Rollout
 
 1. Deploy the Threads `if_unset` and idempotent no-op API behavior.
-2. Add the bridge client method and `threads title` CLI command.
+2. Add the bridge client method and canonical `threads messages title` action.
 3. Add the runner output field, prompt, and daemon-side guarded update.
 4. Add `auto_title: true` to example configurations.
 5. Enable it for one scope of each runner type and observe missing/invalid/error
@@ -458,7 +458,7 @@ The websocket title event provides the UI update.
 
 ## Alternatives considered
 
-### Prompt the agent to run `threads title`
+### Prompt the agent to run `threads messages title`
 
 This is simple but unreliable across runner safety modes and makes an optional
 tool call responsible for product metadata. Keep it as an explicit capability,

@@ -508,7 +508,7 @@ func TestHandleEventSurfacesRunnerErrorsInThreads(t *testing.T) {
 	if len(s.sent) != 1 {
 		t.Fatalf("sent=%d %+v", len(s.sent), s.sent)
 	}
-	if s.sent[0].MessageType != "error" || s.sent[0].ThreadID != "m1" || !strings.Contains(s.sent[0].Content, "OpenRouter error: 402 insufficient credits") {
+	if s.sent[0].MessageType != "progress" || s.sent[0].Metadata["severity"] != "error" || s.sent[0].ThreadID != "m1" || !strings.Contains(s.sent[0].Content, "OpenRouter error: 402 insufficient credits") {
 		t.Fatalf("bad error message: %+v", s.sent[0])
 	}
 	if len(s.messageStatuses) == 0 || s.messageStatuses[len(s.messageStatuses)-1].Status != "error" || !strings.Contains(s.messageStatuses[len(s.messageStatuses)-1].ErrorText, "OpenRouter error") {
