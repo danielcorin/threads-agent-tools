@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       threads_cli_version:
-        description: Canonical Threads CLI release version staged on the draft
+        description: Public danielcorin/threads-cli release version
         required: true
         type: string
       bridge_commit:
@@ -33,13 +33,14 @@ jobs:
           cache: true
       - name: Test
         run: go test ./...
-      - name: Download staged canonical Threads CLI
+      - name: Download public canonical Threads CLI
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ inputs.version }}
+          THREADS_CLI_VERSION: ${{ inputs.threads_cli_version }}
         run: |
           mkdir -p release-cli
-          gh release download "$VERSION" \
+          gh release download "$THREADS_CLI_VERSION" \
+            --repo danielcorin/threads-cli \
             --pattern 'threads-darwin-*' \
             --pattern 'threads-linux-*' \
             --pattern 'threads-windows-*' \
@@ -58,6 +59,7 @@ jobs:
           release-cli/threads-linux-x64 --help
           test "$(release-cli/threads-linux-x64 --version)" = "threads ${THREADS_CLI_VERSION}"
           test "$(jq -r .version release-cli/threads-cli-manifest.json)" = "$THREADS_CLI_VERSION"
+          test "$(jq -r .source release-cli/threads-cli-manifest.json)" = "https://github.com/danielcorin/threads-cli/tree/$(jq -r .gitSha release-cli/threads-cli-manifest.json)"
       - name: Build release assets
         env:
           VERSION: ${{ inputs.version }}
@@ -101,7 +103,7 @@ jobs:
               echo "- linux/arm64"
               echo
               echo "This release bundles canonical Threads CLI ${THREADS_CLI_VERSION}."
-              echo "The raw canonical CLI assets, including Windows x64, are attached separately."
+              echo "Standalone binaries for all five platforms and build attestations are published at https://github.com/danielcorin/threads-cli/releases/tag/${THREADS_CLI_VERSION}."
               echo
               echo "Users must provide their own Threads bot token and local agent CLI credentials."
             } > "$notes_file"
@@ -109,6 +111,8 @@ jobs:
           gh release upload "$VERSION" \
             dist/threads-agent-bridge_${VERSION}_*.tar.gz \
             dist/checksums.txt \
+            release-cli/THREADS_CLI_SHA256SUMS \
+            release-cli/threads-cli-manifest.json \
             --clobber
           gh release edit "$VERSION" \
             --draft=false \

@@ -5,7 +5,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/danielcorin/threads-agent-bridge.svg)](https://pkg.go.dev/github.com/danielcorin/threads-agent-bridge)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-Local single-binary daemon that connects Threads owner-scoped events to local agent CLIs (Codex, Claude Code, and Pi headless). Release archives also contain the canonical agent-facing `threads` CLI produced by the private Threads application repository.
+Local single-binary daemon that connects Threads owner-scoped events to local agent CLIs (Codex, Claude Code, and Pi headless). Release archives also contain the canonical agent-facing `threads` CLI built from the public [`danielcorin/threads-cli`](https://github.com/danielcorin/threads-cli) source.
 
 ## v0 shape
 
@@ -55,11 +55,10 @@ CI runs formatting checks, `go vet`, `go test ./...`, and binary builds on every
 
 ## Releases
 
-Release archives are coordinated by
-`danielcorin/threads/scripts/release-cli-and-bridge.sh`. The script stages the
-five canonical CLI executables on a draft bridge release, then dispatches this
-repository's release workflow. The workflow verifies their checksums and
-version before building `threads-agent-bridge` for:
+Release archives are coordinated by the private Threads app after it verifies
+its public `threads-cli` submodule pin. This repository's workflow downloads
+the requested public CLI release directly, verifies its checksums, source
+manifest, and version, then builds `threads-agent-bridge` for:
 
 - `darwin/arm64`
 - `darwin/amd64`
@@ -73,11 +72,12 @@ assets, run:
 THREADS_CLI_DIR=/path/to/threads-cli-assets scripts/build-release.sh v0.1.3
 ```
 
-Release assets include the raw canonical CLI executables for all five
-platforms, four macOS/Linux daemon archives containing the matching CLI,
-provenance/checksum manifests, `README.md`, `LICENSE`, and
-`config.example.json`. Users must provide their own Threads bot token and local
-agent CLI credentials.
+Release assets include four macOS/Linux daemon archives containing the matching
+public CLI plus its source/checksum manifests, `README.md`, `LICENSE`, and
+`config.example.json`. Standalone binaries for all five platforms and their
+build-provenance attestations remain on the public
+[`threads-cli` release](https://github.com/danielcorin/threads-cli/releases).
+Users must provide their own Threads bot token and local agent CLI credentials.
 
 ## Running as a macOS LaunchAgent
 

@@ -25,8 +25,9 @@ does not maintain another CLI implementation.
 ## Releases
 
 The coordinated release script in `danielcorin/threads` creates a draft bridge
-release containing canonical CLI assets, then dispatches this repository's
-release workflow. To build the same archive set locally:
+release pinned to an exact commit, then dispatches this repository's release
+workflow. The workflow downloads canonical assets from the public
+`danielcorin/threads-cli` release. To build the same archive set locally:
 
 ```bash
 THREADS_CLI_DIR=/path/to/threads-cli-assets scripts/build-release.sh v0.1.3
