@@ -177,6 +177,24 @@ func TestScanRunnerOutputEmitsLimitEventsForSupportedRunners(t *testing.T) {
 	}
 }
 
+func TestConfiguredAdapterOnlyParsesItsOwnTelemetry(t *testing.T) {
+	input := strings.NewReader(`{"type":"rate_limit_event","message":"Claude usage limit reached"}
+{"type":"token_count","rate_limits":{"primary":{"used_percent":100}}}
+`)
+	var got []LimitEvent
+	var buf bytes.Buffer
+	err := scanAdapterOutput(context.Background(), claudeAdapter{}, input, &buf, nil, func(ctx context.Context, event LimitEvent) error {
+		got = append(got, event)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Source != "claude-code" {
+		t.Fatalf("configured adapter leaked provider telemetry: %+v", got)
+	}
+}
+
 func TestParseToolEventsFromCodexJSON(t *testing.T) {
 	started, ok := parseToolEvent([]byte(`{"type":"item.started","item":{"type":"command_execution","id":"item_0","command":"/bin/zsh -lc pwd","status":"in_progress"}}`))
 	if !ok || started.ID != "item_0" || started.Name != "shell" || started.Status != ToolEventStarted || started.Input != "/bin/zsh -lc pwd" {
@@ -255,7 +273,7 @@ func TestParseCodexFallbackUsesLastAgentMessage(t *testing.T) {
 
 func TestBuildClaudeArgs(t *testing.T) {
 	scope := config.Scope{Runner: config.RunnerConfig{Type: "claude-code", Args: []string{"-p", "--verbose", "--output-format", "stream-json"}}, Safety: config.SafetyConfig{Mode: "read-only", AllowedTools: []string{"Read", "Bash(git status:*)"}}}
-	got := buildArgs(scope, "")
+	got := adapterFor(scope.Runner.Type).BuildInvocation(scope, Input{}).Args
 	want := []string{"-p", "--verbose", "--output-format", "stream-json", "--permission-mode", "plan", "--allowedTools", "Read,Bash(git status:*)"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %#v", got)
@@ -264,27 +282,29 @@ func TestBuildClaudeArgs(t *testing.T) {
 
 func TestBuildAutoPermissionArgs(t *testing.T) {
 	codex := config.Scope{Runner: config.RunnerConfig{Type: "codex", Args: []string{"exec", "--json"}}, Safety: config.SafetyConfig{Mode: "auto"}}
-	if got, want := buildArgs(codex, ""), []string{"exec", "--json", "--sandbox", "workspace-write", "-c", "approval_policy=\"never\"", "-c", "sandbox_workspace_write.network_access=true"}; !reflect.DeepEqual(got, want) {
+	if got, want := adapterFor(codex.Runner.Type).BuildInvocation(codex, Input{}).Args, []string{"exec", "--json", "--sandbox", "workspace-write", "-c", "approval_policy=\"never\"", "-c", "sandbox_workspace_write.network_access=true"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("codex auto args got %#v want %#v", got, want)
 	}
 	claude := config.Scope{Runner: config.RunnerConfig{Type: "claude-code", Args: []string{"-p", "--verbose", "--output-format", "stream-json"}}, Safety: config.SafetyConfig{Mode: "auto"}}
-	if got, want := buildArgs(claude, ""), []string{"-p", "--verbose", "--output-format", "stream-json", "--permission-mode", "auto"}; !reflect.DeepEqual(got, want) {
+	if got, want := adapterFor(claude.Runner.Type).BuildInvocation(claude, Input{}).Args, []string{"-p", "--verbose", "--output-format", "stream-json", "--permission-mode", "auto"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("claude auto args got %#v want %#v", got, want)
 	}
 }
 
 func TestBuildResumeArgs(t *testing.T) {
 	codex := config.Scope{Runner: config.RunnerConfig{Type: "codex", Args: []string{"exec", "--json"}}, Safety: config.SafetyConfig{Mode: "read-only"}}
-	if got, want := buildArgs(codex, "codex-session"), []string{"exec", "--sandbox", "read-only", "resume", "--json", "codex-session", "-"}; !reflect.DeepEqual(got, want) {
+	if got, want := adapterFor(codex.Runner.Type).BuildInvocation(codex, Input{RunnerSessionID: "codex-session"}).Args, []string{"exec", "--sandbox", "read-only", "resume", "--json", "codex-session", "-"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("codex args got %#v want %#v", got, want)
 	}
 	claude := config.Scope{Runner: config.RunnerConfig{Type: "claude-code", Args: []string{"-p", "--verbose", "--output-format", "stream-json"}}}
-	if got, want := buildArgs(claude, "claude-session"), []string{"-p", "--verbose", "--output-format", "stream-json", "--resume", "claude-session"}; !reflect.DeepEqual(got, want) {
+	if got, want := adapterFor(claude.Runner.Type).BuildInvocation(claude, Input{RunnerSessionID: "claude-session"}).Args, []string{"-p", "--verbose", "--output-format", "stream-json", "--resume", "claude-session"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("claude args got %#v want %#v", got, want)
 	}
 	pi := config.Scope{Runner: config.RunnerConfig{Type: "pi", Args: []string{"--mode", "json", "--print"}}, Safety: config.SafetyConfig{Mode: "read-only"}}
-	if got, want := buildArgs(pi, "/tmp/pi/session.jsonl"), []string{"--mode", "json", "--print", "--tools", "read,grep,find,ls", "--session", "/tmp/pi/session.jsonl"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("pi args got %#v want %#v", got, want)
+	gotPi := adapterFor(pi.Runner.Type).BuildInvocation(pi, Input{RunnerSessionID: "/tmp/pi/session.jsonl"}).Args
+	wantPiPrefix := []string{"--mode", "json", "--print", "--tools", "read,grep,find,ls", "--session", "/tmp/pi/session.jsonl", "--append-system-prompt"}
+	if len(gotPi) != len(wantPiPrefix)+1 || !reflect.DeepEqual(gotPi[:len(wantPiPrefix)], wantPiPrefix) || !strings.Contains(gotPi[len(gotPi)-1], "Threads agent bridge session") {
+		t.Fatalf("pi args got %#v", gotPi)
 	}
 }
 
