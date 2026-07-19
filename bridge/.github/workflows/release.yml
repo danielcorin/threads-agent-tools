@@ -1,0 +1,121 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Existing draft bridge release/tag to package, e.g. v0.1.3
+        required: true
+        type: string
+      threads_cli_version:
+        description: Public danielcorin/threads-cli release version
+        required: true
+        type: string
+      bridge_commit:
+        description: Exact threads-agent-bridge commit to package
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.bridge_commit }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.24.x'
+          cache: true
+      - name: Test
+        run: go test ./...
+      - name: Download public canonical Threads CLI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          THREADS_CLI_VERSION: ${{ inputs.threads_cli_version }}
+        run: |
+          mkdir -p release-cli
+          gh release download "$THREADS_CLI_VERSION" \
+            --repo danielcorin/threads-cli \
+            --pattern 'threads-darwin-*' \
+            --pattern 'threads-linux-*' \
+            --pattern 'threads-windows-*' \
+            --pattern THREADS_CLI_SHA256SUMS \
+            --pattern threads-cli-manifest.json \
+            --dir release-cli
+          (
+            cd release-cli
+            sha256sum --check THREADS_CLI_SHA256SUMS
+          )
+      - name: Smoke test canonical CLI
+        env:
+          THREADS_CLI_VERSION: ${{ inputs.threads_cli_version }}
+        run: |
+          chmod 0755 release-cli/threads-linux-x64
+          release-cli/threads-linux-x64 --help
+          test "$(release-cli/threads-linux-x64 --version)" = "threads ${THREADS_CLI_VERSION}"
+          test "$(jq -r .version release-cli/threads-cli-manifest.json)" = "$THREADS_CLI_VERSION"
+          test "$(jq -r .source release-cli/threads-cli-manifest.json)" = "https://github.com/danielcorin/threads-cli/tree/$(jq -r .gitSha release-cli/threads-cli-manifest.json)"
+      - name: Build release assets
+        env:
+          VERSION: ${{ inputs.version }}
+          THREADS_CLI_DIR: ${{ github.workspace }}/release-cli
+        run: scripts/build-release.sh "$VERSION"
+      - name: Smoke test packaged Linux artifact
+        env:
+          VERSION: ${{ inputs.version }}
+          THREADS_CLI_VERSION: ${{ inputs.threads_cli_version }}
+        run: |
+          tmp=$(mktemp -d)
+          tar -xzf "dist/threads-agent-bridge_${VERSION}_linux_amd64.tar.gz" -C "$tmp"
+          "$tmp/threads-agent-bridge_${VERSION}_linux_amd64/threads-agent-bridge" -h
+          "$tmp/threads-agent-bridge_${VERSION}_linux_amd64/threads" -h
+          test "$("$tmp/threads-agent-bridge_${VERSION}_linux_amd64/threads" --version)" = "threads ${THREADS_CLI_VERSION}"
+      - name: Publish staged GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          THREADS_CLI_VERSION: ${{ inputs.threads_cli_version }}
+          BRIDGE_COMMIT: ${{ inputs.bridge_commit }}
+        run: |
+          notes_file="dist/RELEASE_NOTES_${VERSION}.md"
+          if [ ! -s "$notes_file" ]; then
+            test "$(git rev-parse HEAD)" = "$BRIDGE_COMMIT"
+            previous=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
+            {
+              echo "# threads-agent-bridge ${VERSION}"
+              echo
+              echo "## Changes"
+              if [ -n "$previous" ]; then
+                git log --pretty='- %s' "${previous}..HEAD"
+              else
+                git log --pretty='- %s' HEAD
+              fi
+              echo
+              echo "## Downloads"
+              echo "- darwin/arm64"
+              echo "- darwin/amd64"
+              echo "- linux/amd64"
+              echo "- linux/arm64"
+              echo
+              echo "This release bundles canonical Threads CLI ${THREADS_CLI_VERSION}."
+              echo "Standalone binaries for all five platforms and build attestations are published at https://github.com/danielcorin/threads-cli/releases/tag/${THREADS_CLI_VERSION}."
+              echo
+              echo "Users must provide their own Threads bot token and local agent CLI credentials."
+            } > "$notes_file"
+          fi
+          gh release upload "$VERSION" \
+            dist/threads-agent-bridge_${VERSION}_*.tar.gz \
+            dist/checksums.txt \
+            release-cli/THREADS_CLI_SHA256SUMS \
+            release-cli/threads-cli-manifest.json \
+            --clobber
+          gh release edit "$VERSION" \
+            --draft=false \
+            --latest \
+            --title "threads-agent-bridge ${VERSION}" \
+            --notes-file "$notes_file"

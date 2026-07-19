@@ -1,0 +1,106 @@
+{
+  "database_path": "threads-agent-bridge.db",
+  "scopes": [
+    {
+      "id": "personal-codex",
+      "threads": {
+        "base_url": "https://api.threads.space",
+        "token_env": "THREADS_CODEX_TOKEN",
+        "user_id": "CODEX_BOT_USER_ID"
+      },
+      "runner": {
+        "type": "codex",
+        "command": "codex",
+        "args": [
+          "exec",
+          "--json"
+        ],
+        "working_dir": "/path/to/workspace",
+        "structured": true,
+        "auto_title": true
+      },
+      "safety": {
+        "mode": "read-only",
+        "allowed_tools": []
+      },
+      "match": {
+        "channel_ids": [
+          "ch_replace_me"
+        ],
+        "thread_ids": [
+          "*"
+        ]
+      }
+    },
+    {
+      "id": "personal-claude-code",
+      "threads": {
+        "base_url": "https://api.threads.space",
+        "token_env": "THREADS_CLAUDE_CODE_TOKEN",
+        "user_id": "CLAUDE_CODE_BOT_USER_ID"
+      },
+      "runner": {
+        "type": "claude-code",
+        "command": "npx",
+        "args": [
+          "-y",
+          "@anthropic-ai/claude-code",
+          "-p",
+          "--verbose",
+          "--output-format",
+          "stream-json"
+        ],
+        "working_dir": "/path/to/workspace",
+        "structured": true,
+        "auto_title": true
+      },
+      "safety": {
+        "mode": "read-only",
+        "allowed_tools": [
+          "Read",
+          "Bash(git status:*)"
+        ]
+      },
+      "match": {
+        "channel_ids": [
+          "ch_replace_me"
+        ],
+        "thread_ids": [
+          "*"
+        ]
+      }
+    },
+    {
+      "id": "personal-pi",
+      "threads": {
+        "base_url": "https://api.threads.space",
+        "token_env": "THREADS_PI_TOKEN",
+        "user_id": "PI_BOT_USER_ID"
+      },
+      "runner": {
+        "type": "pi",
+        "command": "pi",
+        "args": [
+          "--mode",
+          "json",
+          "--print"
+        ],
+        "working_dir": "/path/to/workspace",
+        "structured": true,
+        "auto_title": true
+      },
+      "safety": {
+        "mode": "read-only",
+        "allowed_tools": []
+      },
+      "match": {
+        "channel_ids": [
+          "ch_replace_me"
+        ],
+        "thread_ids": [
+          "*"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+/threads-agent-bridge
+/bin/
+/dist/
+/logs/
+*.db
+*.db-*
+.env
+.secrets/
+config.local.json
+.DS_Store
