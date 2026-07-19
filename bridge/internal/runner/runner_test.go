@@ -103,9 +103,27 @@ func TestParseLimitEventsFromPiJSON(t *testing.T) {
 }
 
 func TestParseLimitEventsFromClaudeJSON(t *testing.T) {
-	event, ok := parseLimitEvent([]byte(`{"type":"rate_limit_event","message":"Claude usage limit reached; resets at 5pm"}`))
-	if !ok || event.Source != "claude-code" || event.Severity != "warning" || !strings.Contains(event.Message, "usage limit") {
-		t.Fatalf("bad claude limit event: ok=%v event=%+v", ok, event)
+	tests := []struct {
+		name     string
+		payload  string
+		wantOK   bool
+		severity string
+	}{
+		{name: "allowed is ignored", payload: `{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour","utilization":0.03}}`},
+		{name: "warning is emitted", payload: `{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","rateLimitType":"five_hour","utilization":0.9}}`, wantOK: true, severity: "warning"},
+		{name: "rejection is emitted", payload: `{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","rateLimitType":"seven_day"}}`, wantOK: true, severity: "error"},
+		{name: "legacy message is emitted", payload: `{"type":"rate_limit_event","message":"Claude usage limit reached; resets at 5pm"}`, wantOK: true, severity: "warning"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			event, ok := parseLimitEvent([]byte(tt.payload))
+			if ok != tt.wantOK {
+				t.Fatalf("ok=%v event=%+v", ok, event)
+			}
+			if ok && (event.Source != "claude-code" || event.Severity != tt.severity || event.Message == "") {
+				t.Fatalf("bad claude limit event: %+v", event)
+			}
+		})
 	}
 }
 
