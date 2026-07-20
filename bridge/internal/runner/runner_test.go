@@ -12,9 +12,16 @@ import (
 )
 
 func TestParseStructuredOutput(t *testing.T) {
-	out := parseStructuredOutput(Output{Text: `{"content":"Done","thread_title":"  Investigate reconnects  ","reactions":[{"message_id":"m1","emoji":"✅"},{"message_id":"","emoji":"❌"}]}`})
-	if out.Text != "Done" || out.ThreadTitle != "Investigate reconnects" || len(out.Reactions) != 1 || out.Reactions[0].MessageID != "m1" || out.Reactions[0].Emoji != "✅" {
+	out := parseStructuredOutput(Output{Text: `{"content":"Done","thread_title":"  Investigate reconnects  ","reactions":[{"message_id":"m1","emoji":"✅"},{"message_id":"","emoji":"❌"}]}`}, "current")
+	if out.Text != "Done" || out.ThreadTitle != "Investigate reconnects" || len(out.Reactions) != 2 || out.Reactions[0].MessageID != "m1" || out.Reactions[0].Emoji != "✅" || out.Reactions[1].MessageID != "current" || out.Reactions[1].Emoji != "❌" {
 		t.Fatalf("bad structured output: %+v", out)
+	}
+}
+
+func TestParseStructuredOutputAcceptsReactionShorthand(t *testing.T) {
+	out := parseStructuredOutput(Output{Text: `{"content":"Test received","thread_title":"Bridge Connection Test","reactions":["👍"]}`}, "current")
+	if out.Text != "Test received" || out.ThreadTitle != "Bridge Connection Test" || len(out.Reactions) != 1 || out.Reactions[0].MessageID != "current" || out.Reactions[0].Emoji != "👍" {
+		t.Fatalf("bad structured shorthand output: %+v", out)
 	}
 }
 
