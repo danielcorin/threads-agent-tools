@@ -21,6 +21,14 @@ import (
 
 const maxWebSocketMessageBytes int64 = 16 * 1024 * 1024
 
+// presenceReadTimeout bounds each presence-socket read. The server sends a
+// heartbeat ping every ~30s, so any read that blocks longer than this means the
+// socket has gone half-open (silent TCP teardown — no close frame reaches us).
+// Without this deadline the read blocks forever and the presence goroutine never
+// reconnects, leaving the bot shown as offline. Mirrors the TS adapter's
+// PRESENCE_LIVENESS_TIMEOUT_MS guard.
+const presenceReadTimeout = 90 * time.Second
+
 type Client struct {
 	BaseURL string
 	Token   string
@@ -102,8 +110,13 @@ func (c Client) MaintainPresence(ctx context.Context) error {
 	conn.SetReadLimit(maxWebSocketMessageBytes)
 	defer conn.Close(websocket.StatusNormalClosure, "")
 	for {
-		_, data, err := conn.Read(ctx)
+		readCtx, cancel := context.WithTimeout(ctx, presenceReadTimeout)
+		_, data, err := conn.Read(readCtx)
+		cancel()
 		if err != nil {
+			// A timeout here means the socket went silent past the heartbeat
+			// window (half-open). Returning triggers a reconnect in the
+			// daemon's maintainPresence retry loop.
 			return err
 		}
 		var msg struct {
