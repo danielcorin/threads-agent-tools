@@ -111,7 +111,7 @@ func (LocalRunner) Run(ctx context.Context, scope config.Scope, input Input) (Ou
 	}
 	out := Output{Text: parsed.Text, RunnerSessionID: parsed.SessionID}
 	if scope.Runner.Structured {
-		out = parseStructuredOutput(out)
+		out = parseStructuredOutput(out, input.Event.Message.ID)
 	}
 	return out, nil
 }
@@ -239,16 +239,16 @@ type parsedJSONLOutput struct {
 
 func parseJSONLText(data []byte) string { return parseJSONLOutput(data).Text }
 
-func parseStructuredOutput(out Output) Output {
+func parseStructuredOutput(out Output, defaultMessageID string) Output {
 	text := strings.TrimSpace(out.Text)
 	if text == "" || !strings.HasPrefix(text, "{") {
 		return out
 	}
 	var payload struct {
-		Content     string     `json:"content"`
-		Text        string     `json:"text"`
-		ThreadTitle string     `json:"thread_title"`
-		Reactions   []Reaction `json:"reactions"`
+		Content     string            `json:"content"`
+		Text        string            `json:"text"`
+		ThreadTitle string            `json:"thread_title"`
+		Reactions   []json.RawMessage `json:"reactions"`
 	}
 	if err := json.Unmarshal([]byte(text), &payload); err != nil {
 		return out
@@ -259,7 +259,16 @@ func parseStructuredOutput(out Output) Output {
 		out.Text = strings.TrimSpace(payload.Text)
 	}
 	out.ThreadTitle = strings.TrimSpace(payload.ThreadTitle)
-	for _, reaction := range payload.Reactions {
+	for _, raw := range payload.Reactions {
+		var reaction Reaction
+		if err := json.Unmarshal(raw, &reaction); err != nil {
+			if err := json.Unmarshal(raw, &reaction.Emoji); err != nil {
+				continue
+			}
+		}
+		if strings.TrimSpace(reaction.MessageID) == "" {
+			reaction.MessageID = defaultMessageID
+		}
 		if strings.TrimSpace(reaction.MessageID) != "" && strings.TrimSpace(reaction.Emoji) != "" {
 			out.Reactions = append(out.Reactions, Reaction{MessageID: strings.TrimSpace(reaction.MessageID), Emoji: strings.TrimSpace(reaction.Emoji)})
 		}
