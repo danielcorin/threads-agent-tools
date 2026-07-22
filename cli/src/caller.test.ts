@@ -10,6 +10,10 @@ import {
 const currentUser = {
   id: 'user-1',
   username: 'dan',
+  email: 'dan@example.com',
+  email_verified_at: 1,
+  pending_email: null,
+  email_verification_expires_at: null,
   display_name: null,
   name_color: null,
   code_theme: null,

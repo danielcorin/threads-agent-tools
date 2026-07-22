@@ -162,11 +162,50 @@
         "security": [
           {
             "sessionCookie": []
-          },
-          {
-            "bearerAuth": []
           }
         ],
+        "x-route-boundary": "core"
+      }
+    },
+    "/auth/email/confirm": {
+      "get": {
+        "operationId": "getAuthEmailConfirm",
+        "tags": [
+          "auth"
+        ],
+        "summary": "Confirm ownership of an email address",
+        "description": "Consume the single-use verification token sent by email, make the pending address the user's verified recovery email, and redirect to the application settings screen.",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          }
+        ],
+        "responses": {
+          "303": {
+            "description": "Email verified; redirect to the application.",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string",
+                  "format": "uri"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The token is invalid or expired; an informational HTML page is returned."
+          },
+          "409": {
+            "description": "The pending email is already associated with another account; an informational HTML page is returned."
+          }
+        },
+        "security": [],
         "x-route-boundary": "core"
       }
     },
@@ -177,7 +216,7 @@
           "users"
         ],
         "summary": "POST /users",
-        "description": "Create a human or bot user with an initial password. Authorized by the authenticated user's admin flag.",
+        "description": "Create a human or bot user with an initial password. Human users require a unique recovery email and the API immediately attempts to send its confirmation link; delivery status is returned without making a temporary mail outage block account creation. Bot email is optional. Requires an admin session or an admin bearer token with users:provision.",
         "parameters": [],
         "responses": {
           "201": {
@@ -705,6 +744,116 @@
         "x-route-boundary": "core"
       }
     },
+    "/users/me/email/change": {
+      "post": {
+        "operationId": "postUsersMeEmailChange",
+        "tags": [
+          "users"
+        ],
+        "summary": "Set or change the current user's recovery email",
+        "description": "Re-authorize with the current password and send a single-use verification link to the requested address. An existing verified address remains active until the replacement is confirmed. Requesting the already-verified address cancels any pending replacement. Browser session authentication is required; bearer tokens are rejected.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Verification sent, or the requested address was already verified.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailVerificationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "502": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailChangeRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "x-route-boundary": "core"
+      }
+    },
+    "/users/me/email/verification/resend": {
+      "post": {
+        "operationId": "postUsersMeEmailVerificationResend",
+        "tags": [
+          "users"
+        ],
+        "summary": "Resend the pending email verification",
+        "description": "Invalidate the prior token and send a fresh verification link for the current pending address. Subject to per-user cooldown and daily limits. Browser session authentication is required; bearer tokens are rejected.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "A fresh verification message was sent.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailVerificationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error"
+          },
+          "502": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "x-route-boundary": "core"
+      }
+    },
     "/users/me/frequent-emojis": {
       "get": {
         "operationId": "getUsersMeFrequentEmojis",
@@ -756,7 +905,7 @@
           "users"
         ],
         "summary": "POST /users/me/api-tokens",
-        "description": "Create a scoped API bearer token for the authenticated user. Restricted to admin users. The token is returned once and cannot be retrieved later. Scopes default to read/write and expiry defaults to 90 days.",
+        "description": "Create a scoped API bearer token for the authenticated admin. Requires an interactive session. The token is returned once, stored only as a keyed one-way verifier, and cannot be retrieved later. Scopes default to read/write and expiry defaults to 90 days.",
         "parameters": [],
         "responses": {
           "201": {
@@ -785,9 +934,6 @@
         "security": [
           {
             "sessionCookie": []
-          },
-          {
-            "bearerAuth": []
           }
         ],
         "requestBody": {
@@ -808,7 +954,7 @@
           "users"
         ],
         "summary": "GET /users/me/api-tokens",
-        "description": "List the authenticated user's API tokens. Restricted to admin users. Returns non-secret metadata including scopes and expiry — never the token value.",
+        "description": "List the authenticated admin's API tokens. Requires an interactive session. Returns non-secret metadata including scopes, expiry, and last use — never the token value.",
         "parameters": [],
         "responses": {
           "200": {
@@ -837,9 +983,6 @@
         "security": [
           {
             "sessionCookie": []
-          },
-          {
-            "bearerAuth": []
           }
         ],
         "x-route-boundary": "core"
@@ -852,7 +995,7 @@
           "users"
         ],
         "summary": "DELETE /users/me/api-tokens/:id",
-        "description": "Revoke one of the authenticated user's own API tokens by its hashed id (from GET /users/me/api-tokens). Restricted to admin users and scoped to the caller, so a user can only revoke their own tokens.",
+        "description": "Revoke one of the authenticated admin's own API tokens by its hashed id (from GET /users/me/api-tokens). Requires an interactive session and immediately closes sockets using that credential.",
         "parameters": [
           {
             "name": "id",
@@ -890,9 +1033,6 @@
         "security": [
           {
             "sessionCookie": []
-          },
-          {
-            "bearerAuth": []
           }
         ],
         "x-route-boundary": "core"
@@ -1054,7 +1194,7 @@
           "users"
         ],
         "summary": "POST /users/:id/api-tokens",
-        "description": "Create an API bearer token for another user by id (for example, a bot the admin just created via POST /users). Restricted to admin users (the session user's is_admin flag), authorized by the caller's session/bearer credential. The token is returned once and cannot be retrieved later.",
+        "description": "Create an API bearer token for another user by id. Requires an admin session or an admin bearer token with tokens:manage. The token is returned once, stored only as a keyed one-way verifier, and cannot be retrieved later.",
         "parameters": [
           {
             "name": "id",
@@ -6429,7 +6569,7 @@
           "users"
         ],
         "summary": "POST /users/:id/reset-password",
-        "description": "Reset another user's password by id. Restricted to admin users (the session user's is_admin flag).",
+        "description": "Reset another user's password by id. Requires an interactive admin session and revokes all of the target user's sessions.",
         "parameters": [
           {
             "name": "id",
@@ -6477,9 +6617,6 @@
         "security": [
           {
             "sessionCookie": []
-          },
-          {
-            "bearerAuth": []
           }
         ],
         "x-route-boundary": "core"
@@ -6492,7 +6629,7 @@
           "users"
         ],
         "summary": "DELETE /users/:id/api-tokens/:tokenId",
-        "description": "Revoke another user's API token by its hashed id. Restricted to admin users (the session user's is_admin flag).",
+        "description": "Revoke another user's API token by its hashed id. Requires an admin session or an admin bearer token with tokens:manage and immediately closes sockets using that credential.",
         "parameters": [
           {
             "name": "id",
@@ -6553,7 +6690,7 @@
           "users"
         ],
         "summary": "DELETE /users/:id",
-        "description": "Delete a user by id. Restricted to admin users (the session user's is_admin flag).",
+        "description": "Delete a user by id. Requires an interactive admin session.",
         "parameters": [
           {
             "name": "id",
@@ -6591,9 +6728,6 @@
         "security": [
           {
             "sessionCookie": []
-          },
-          {
-            "bearerAuth": []
           }
         ],
         "x-route-boundary": "core"
@@ -6606,7 +6740,7 @@
           "operations"
         ],
         "summary": "GET /errors",
-        "description": "List the 50 most recent server error-log rows. Restricted to admin users (the session user's is_admin flag).",
+        "description": "List the 50 most recent server error-log rows. Requires an interactive admin session.",
         "parameters": [],
         "responses": {
           "200": {
@@ -6635,9 +6769,6 @@
         "security": [
           {
             "sessionCookie": []
-          },
-          {
-            "bearerAuth": []
           }
         ],
         "x-route-boundary": "extension"
@@ -6711,9 +6842,6 @@
         "security": [
           {
             "sessionCookie": []
-          },
-          {
-            "bearerAuth": []
           }
         ],
         "x-route-boundary": "extension"
@@ -6788,8 +6916,8 @@
       "sessionCookie": {
         "type": "apiKey",
         "in": "cookie",
-        "name": "session",
-        "description": "Browser session cookie set by POST /auth/login. Generated non-browser clients should prefer bearerAuth when they have a user API token."
+        "name": "__Host-session",
+        "description": "Host-only browser session cookie set by POST /auth/login. The legacy session cookie name is accepted during migration. Generated non-browser clients should prefer bearerAuth when they have a user API token."
       },
       "bearerAuth": {
         "type": "http",
@@ -6833,6 +6961,8 @@
         "required": [
           "id",
           "username",
+          "email",
+          "email_verified_at",
           "display_name",
           "name_color",
           "code_theme",
@@ -6848,6 +6978,20 @@
           },
           "username": {
             "type": "string"
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "email"
+          },
+          "email_verified_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Unix timestamp when ownership of the email was confirmed; null until verified."
           },
           "display_name": {
             "type": [
@@ -6899,6 +7043,10 @@
         "required": [
           "id",
           "username",
+          "email",
+          "email_verified_at",
+          "pending_email",
+          "email_verification_expires_at",
           "display_name",
           "name_color",
           "code_theme",
@@ -6912,6 +7060,35 @@
           },
           "username": {
             "type": "string"
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "email"
+          },
+          "email_verified_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Unix timestamp when ownership of the email was confirmed; null until verified."
+          },
+          "pending_email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "email",
+            "description": "Unverified replacement address awaiting confirmation, when present."
+          },
+          "email_verification_expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Unix expiry timestamp for the pending email verification token."
           },
           "display_name": {
             "type": [
@@ -7151,6 +7328,11 @@
             "enum": [
               true
             ]
+          },
+          "connections_closed": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "For credential revocation responses, the number of established WebSockets closed immediately. Omitted by other operations."
           }
         },
         "additionalProperties": false
@@ -7229,6 +7411,68 @@
           "newPassword": {
             "type": "string",
             "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "EmailChangeRequest": {
+        "type": "object",
+        "required": [
+          "email",
+          "currentPassword"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 254
+          },
+          "currentPassword": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Current account password used for re-authorization."
+          }
+        },
+        "additionalProperties": false
+      },
+      "EmailVerificationResponse": {
+        "type": "object",
+        "required": [
+          "ok",
+          "verified",
+          "pendingEmail",
+          "expiresAt"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "verified": {
+            "type": "boolean",
+            "description": "True only when the requested address was already the verified address."
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "email"
+          },
+          "pendingEmail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "email"
+          },
+          "expiresAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
           }
         },
         "additionalProperties": false
@@ -9900,6 +10144,12 @@
             "type": "string",
             "minLength": 1
           },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 254,
+            "description": "Required for human users and optional for bots. Must be unique within the workspace after normalization."
+          },
           "displayName": {
             "type": [
               "string",
@@ -9921,7 +10171,10 @@
         "required": [
           "id",
           "username",
-          "displayName"
+          "email",
+          "displayName",
+          "emailVerificationSent",
+          "emailVerificationExpiresAt"
         ],
         "properties": {
           "id": {
@@ -9930,11 +10183,29 @@
           "username": {
             "type": "string"
           },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "email"
+          },
           "displayName": {
             "type": [
               "string",
               "null"
             ]
+          },
+          "emailVerificationSent": {
+            "type": "boolean",
+            "description": "Whether the initial confirmation email was accepted by the delivery provider. Always false for bots."
+          },
+          "emailVerificationExpiresAt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Unix expiry timestamp for the initial verification link when it was sent."
           }
         },
         "additionalProperties": false
@@ -10152,7 +10423,9 @@
         "type": "string",
         "enum": [
           "threads:read",
-          "threads:write"
+          "threads:write",
+          "users:provision",
+          "tokens:manage"
         ]
       },
       "AdminCreateApiTokenRequest": {
@@ -10246,7 +10519,8 @@
           "name",
           "scopes",
           "expires_at",
-          "created_at"
+          "created_at",
+          "last_used_at"
         ],
         "properties": {
           "id": {
@@ -10272,6 +10546,13 @@
           "created_at": {
             "type": "integer",
             "description": "Unix epoch seconds when the token was created."
+          },
+          "last_used_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Unix epoch seconds when authentication last used the token, or null when it has never been used."
           }
         },
         "additionalProperties": false

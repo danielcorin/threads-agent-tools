@@ -59,6 +59,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/email/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Confirm ownership of an email address
+         * @description Consume the single-use verification token sent by email, make the pending address the user's verified recovery email, and redirect to the application settings screen.
+         */
+        get: operations["getAuthEmailConfirm"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/users": {
         parameters: {
             query?: never;
@@ -70,7 +90,7 @@ export interface paths {
         put?: never;
         /**
          * POST /users
-         * @description Create a human or bot user with an initial password. Authorized by the authenticated user's admin flag.
+         * @description Create a human or bot user with an initial password. Human users require a unique recovery email and the API immediately attempts to send its confirmation link; delivery status is returned without making a temporary mail outage block account creation. Bot email is optional. Requires an admin session or an admin bearer token with users:provision.
          */
         post: operations["postUsers"];
         delete?: never;
@@ -263,6 +283,46 @@ export interface paths {
         patch: operations["patchUsersMe"];
         trace?: never;
     };
+    "/users/me/email/change": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set or change the current user's recovery email
+         * @description Re-authorize with the current password and send a single-use verification link to the requested address. An existing verified address remains active until the replacement is confirmed. Requesting the already-verified address cancels any pending replacement. Browser session authentication is required; bearer tokens are rejected.
+         */
+        post: operations["postUsersMeEmailChange"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/me/email/verification/resend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resend the pending email verification
+         * @description Invalidate the prior token and send a fresh verification link for the current pending address. Subject to per-user cooldown and daily limits. Browser session authentication is required; bearer tokens are rejected.
+         */
+        post: operations["postUsersMeEmailVerificationResend"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/users/me/frequent-emojis": {
         parameters: {
             query?: never;
@@ -292,13 +352,13 @@ export interface paths {
         };
         /**
          * GET /users/me/api-tokens
-         * @description List the authenticated user's API tokens. Restricted to admin users. Returns non-secret metadata including scopes and expiry — never the token value.
+         * @description List the authenticated admin's API tokens. Requires an interactive session. Returns non-secret metadata including scopes, expiry, and last use — never the token value.
          */
         get: operations["getUsersMeApiTokens"];
         put?: never;
         /**
          * POST /users/me/api-tokens
-         * @description Create a scoped API bearer token for the authenticated user. Restricted to admin users. The token is returned once and cannot be retrieved later. Scopes default to read/write and expiry defaults to 90 days.
+         * @description Create a scoped API bearer token for the authenticated admin. Requires an interactive session. The token is returned once, stored only as a keyed one-way verifier, and cannot be retrieved later. Scopes default to read/write and expiry defaults to 90 days.
          */
         post: operations["postUsersMeApiTokens"];
         delete?: never;
@@ -319,7 +379,7 @@ export interface paths {
         post?: never;
         /**
          * DELETE /users/me/api-tokens/:id
-         * @description Revoke one of the authenticated user's own API tokens by its hashed id (from GET /users/me/api-tokens). Restricted to admin users and scoped to the caller, so a user can only revoke their own tokens.
+         * @description Revoke one of the authenticated admin's own API tokens by its hashed id (from GET /users/me/api-tokens). Requires an interactive session and immediately closes sockets using that credential.
          */
         delete: operations["deleteUsersMeApiTokensId"];
         options?: never;
@@ -382,7 +442,7 @@ export interface paths {
         put?: never;
         /**
          * POST /users/:id/api-tokens
-         * @description Create an API bearer token for another user by id (for example, a bot the admin just created via POST /users). Restricted to admin users (the session user's is_admin flag), authorized by the caller's session/bearer credential. The token is returned once and cannot be retrieved later.
+         * @description Create an API bearer token for another user by id. Requires an admin session or an admin bearer token with tokens:manage. The token is returned once, stored only as a keyed one-way verifier, and cannot be retrieved later.
          */
         post: operations["postUsersIdApiTokens"];
         delete?: never;
@@ -1826,7 +1886,7 @@ export interface paths {
         put?: never;
         /**
          * POST /users/:id/reset-password
-         * @description Reset another user's password by id. Restricted to admin users (the session user's is_admin flag).
+         * @description Reset another user's password by id. Requires an interactive admin session and revokes all of the target user's sessions.
          */
         post: operations["postUsersIdResetPassword"];
         delete?: never;
@@ -1847,7 +1907,7 @@ export interface paths {
         post?: never;
         /**
          * DELETE /users/:id/api-tokens/:tokenId
-         * @description Revoke another user's API token by its hashed id. Restricted to admin users (the session user's is_admin flag).
+         * @description Revoke another user's API token by its hashed id. Requires an admin session or an admin bearer token with tokens:manage and immediately closes sockets using that credential.
          */
         delete: operations["deleteUsersIdApiTokensTokenId"];
         options?: never;
@@ -1867,7 +1927,7 @@ export interface paths {
         post?: never;
         /**
          * DELETE /users/:id
-         * @description Delete a user by id. Restricted to admin users (the session user's is_admin flag).
+         * @description Delete a user by id. Requires an interactive admin session.
          */
         delete: operations["deleteUsersId"];
         options?: never;
@@ -1884,7 +1944,7 @@ export interface paths {
         };
         /**
          * GET /errors
-         * @description List the 50 most recent server error-log rows. Restricted to admin users (the session user's is_admin flag).
+         * @description List the 50 most recent server error-log rows. Requires an interactive admin session.
          */
         get: operations["getErrors"];
         put?: never;
@@ -1954,6 +2014,10 @@ export interface components {
         UserRecord: {
             id: string;
             username: string;
+            /** Format: email */
+            email: string | null;
+            /** @description Unix timestamp when ownership of the email was confirmed; null until verified. */
+            email_verified_at: number | null;
             display_name: string | null;
             name_color: string | null;
             code_theme: components["schemas"]["CodeThemeNullable"];
@@ -1970,6 +2034,17 @@ export interface components {
         CurrentUser: {
             id: string;
             username: string;
+            /** Format: email */
+            email: string | null;
+            /** @description Unix timestamp when ownership of the email was confirmed; null until verified. */
+            email_verified_at: number | null;
+            /**
+             * Format: email
+             * @description Unverified replacement address awaiting confirmation, when present.
+             */
+            pending_email: string | null;
+            /** @description Unix expiry timestamp for the pending email verification token. */
+            email_verification_expires_at: number | null;
             display_name: string | null;
             name_color: string | null;
             code_theme: components["schemas"]["CodeThemeNullable"];
@@ -2030,6 +2105,8 @@ export interface components {
         OkResponse: {
             /** @enum {boolean} */
             ok: true;
+            /** @description For credential revocation responses, the number of established WebSockets closed immediately. Omitted by other operations. */
+            connections_closed?: number;
         };
         ResolveMessageResponse: {
             /** @enum {boolean} */
@@ -2054,6 +2131,23 @@ export interface components {
         ChangePasswordRequest: {
             currentPassword: string;
             newPassword: string;
+        };
+        EmailChangeRequest: {
+            /** Format: email */
+            email: string;
+            /** @description Current account password used for re-authorization. */
+            currentPassword: string;
+        };
+        EmailVerificationResponse: {
+            /** @enum {boolean} */
+            ok: true;
+            /** @description True only when the requested address was already the verified address. */
+            verified: boolean;
+            /** Format: email */
+            email?: string | null;
+            /** Format: email */
+            pendingEmail: string | null;
+            expiresAt: number | null;
         };
         /** @enum {string} */
         CodeTheme: "monokai-sublime" | "monokai" | "github-dark" | "github" | "atom-one-dark" | "dracula" | "solarized-dark" | "solarized-light" | "nord";
@@ -2702,6 +2796,11 @@ export interface components {
         AdminCreateUserRequest: {
             username: string;
             password: string;
+            /**
+             * Format: email
+             * @description Required for human users and optional for bots. Must be unique within the workspace after normalization.
+             */
+            email?: string;
             displayName?: string | null;
             /** @enum {string} */
             role?: "human" | "bot";
@@ -2709,7 +2808,13 @@ export interface components {
         AdminCreateUserResponse: {
             id: string;
             username: string;
+            /** Format: email */
+            email: string | null;
             displayName: string | null;
+            /** @description Whether the initial confirmation email was accepted by the delivery provider. Always false for bots. */
+            emailVerificationSent: boolean;
+            /** @description Unix expiry timestamp for the initial verification link when it was sent. */
+            emailVerificationExpiresAt: number | null;
         };
         AdminResetPasswordRequest: {
             password: string;
@@ -2774,7 +2879,7 @@ export interface components {
             secret: string;
         };
         /** @enum {string} */
-        ApiTokenScope: "threads:read" | "threads:write";
+        ApiTokenScope: "threads:read" | "threads:write" | "users:provision" | "tokens:manage";
         AdminCreateApiTokenRequest: {
             name: string;
             /** @description Token permissions. Omitted defaults to both read and write. */
@@ -2804,6 +2909,8 @@ export interface components {
             expires_at: number | null;
             /** @description Unix epoch seconds when the token was created. */
             created_at: number;
+            /** @description Unix epoch seconds when authentication last used the token, or null when it has never been used. */
+            last_used_at: number | null;
         };
         MyApiTokenListResponse: {
             tokens: components["schemas"]["MyApiTokenSummary"][];
@@ -3191,6 +3298,41 @@ export interface operations {
             404: components["responses"]["Error"];
         };
     };
+    getAuthEmailConfirm: {
+        parameters: {
+            query: {
+                token: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Email verified; redirect to the application. */
+            303: {
+                headers: {
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The token is invalid or expired; an informational HTML page is returned. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The pending email is already associated with another account; an informational HTML page is returned. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     postUsers: {
         parameters: {
             query?: never;
@@ -3475,6 +3617,64 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+        };
+    };
+    postUsersMeEmailChange: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmailChangeRequest"];
+            };
+        };
+        responses: {
+            /** @description Verification sent, or the requested address was already verified. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmailVerificationResponse"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            429: components["responses"]["Error"];
+            502: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    postUsersMeEmailVerificationResend: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A fresh verification message was sent. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmailVerificationResponse"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            429: components["responses"]["Error"];
+            502: components["responses"]["Error"];
+            503: components["responses"]["Error"];
         };
     };
     getUsersMeFrequentEmojis: {
