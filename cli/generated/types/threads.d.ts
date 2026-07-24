@@ -10,9 +10,49 @@ export interface paths {
         put?: never;
         /**
          * POST /auth/login
-         * @description Authenticate with username and password. Returns the user record without password_hash and sets the session cookie.
+         * @description Authenticate with username and password. A normal login returns the user and sets a session cookie. If authenticator MFA is enabled or required, returns the next MFA step and sets a short-lived challenge cookie instead.
          */
         post: operations["postAuthLogin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/mfa/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Complete authenticator MFA sign-in
+         * @description Verify a TOTP code against the short-lived MFA challenge cookie. Forced first-time enrollment is committed only after a valid code. On success, sets the normal session cookie.
+         */
+        post: operations["postAuthMfaComplete"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/mfa/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel authenticator MFA sign-in
+         * @description Invalidate the current short-lived MFA challenge and clear its cookie.
+         */
+        post: operations["postAuthMfaCancel"];
         delete?: never;
         options?: never;
         head?: never;
@@ -281,6 +321,86 @@ export interface paths {
          * @description Update mutable authenticated-user profile preferences. At least one recognized field is required.
          */
         patch: operations["patchUsersMe"];
+        trace?: never;
+    };
+    "/users/me/security": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get current user's authenticator security state
+         * @description Return whether authenticator MFA is enabled and whether workspace policy requires it. Browser session authentication is required.
+         */
+        get: operations["getUsersMeSecurity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/me/mfa/enrollment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start voluntary authenticator MFA enrollment
+         * @description Re-authorize with the current password and create a ten-minute authenticator setup secret. The user must have a verified recovery email. The provisioning URI uses the full tenant hostname as its issuer and the verified email as its account label. Browser session authentication is required.
+         */
+        post: operations["postUsersMeMfaEnrollment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/me/mfa/enrollment/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm authenticator MFA enrollment
+         * @description Verify a TOTP code for the pending setup and enable authenticator MFA. A verified recovery email remains required through confirmation. Browser session authentication is required.
+         */
+        post: operations["postUsersMeMfaEnrollmentConfirm"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/me/mfa": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Disable authenticator MFA
+         * @description Re-authorize with the current password and a fresh TOTP code, then disable authenticator MFA. Rejected while workspace policy requires MFA.
+         */
+        delete: operations["deleteUsersMeMfa"];
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/users/me/email/change": {
@@ -923,6 +1043,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/inbox": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List unread Inbox messages
+         * @description List incoming unread human messages and final agent responses across channels and DMs. Thread replies are included. Reading this endpoint does not change read state.
+         */
+        get: operations["getInbox"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/messages/{id}": {
         parameters: {
             query?: never;
@@ -949,6 +1089,26 @@ export interface paths {
          * @description Edit a message owned by the current user.
          */
         patch: operations["patchMessagesId"];
+        trace?: never;
+    };
+    "/messages/{id}/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark one message read
+         * @description Acknowledge one message for the current user without advancing the containing channel's bulk read cursor.
+         */
+        post: operations["postMessagesIdRead"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/messages/{id}/resolve": {
@@ -1915,6 +2075,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/users/{id}/mfa": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Reset a user's authenticator MFA
+         * @description Admin recovery action. Re-authorizes the admin, removes the target human user's authenticator credential, and revokes all target sessions. Admins cannot reset themselves; browser session authentication is required.
+         */
+        delete: operations["deleteUsersIdMfa"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workspace/security": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get workspace authenticator MFA policy
+         * @description Return workspace enforcement state and per-human-user recovery email and enrollment readiness. Admin browser session authentication is required.
+         */
+        get: operations["getWorkspaceSecurity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update workspace authenticator MFA policy
+         * @description Re-authorize the admin and enable or disable enforcement for human users. Enabling is blocked until the admin has MFA and every human user has a verified recovery email.
+         */
+        patch: operations["patchWorkspaceSecurity"];
+        trace?: never;
+    };
     "/users/{id}": {
         parameters: {
             query?: never;
@@ -2030,6 +2234,97 @@ export interface components {
             created_at: number;
         } & {
             [key: string]: unknown;
+        };
+        LoginCompleteResponse: components["schemas"]["UserRecord"] & {
+            /** @constant */
+            next: "complete";
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            next: "LoginCompleteResponse";
+        };
+        MfaSetup: {
+            /** @description Base32 TOTP secret for manual authenticator setup. Treat as sensitive and do not persist after enrollment. */
+            secret: string;
+            /** @description Provisioning URI suitable for a locally rendered QR code. */
+            otpauthUri: string;
+        };
+        MfaEnrollmentSetup: {
+            secret: string;
+            otpauthUri: string;
+            /** @description Unix timestamp when this setup expires. */
+            expiresAt: number;
+        };
+        LoginResponse: components["schemas"]["LoginCompleteResponse"] | {
+            /** @constant */
+            next: "verify_mfa";
+        } | {
+            /** @constant */
+            next: "enroll_mfa";
+            setup: components["schemas"]["MfaSetup"];
+        };
+        MfaCodeRequest: {
+            code: string;
+        };
+        PasswordConfirmationRequest: {
+            currentPassword: string;
+        };
+        MfaReauthorizationRequest: {
+            currentPassword: string;
+            /** @description Required when the acting account has authenticator MFA enabled. */
+            code?: string;
+        };
+        MfaEnabledResponse: {
+            /** @constant */
+            ok: true;
+            /** @constant */
+            mfaEnabled: true;
+        };
+        MfaDisabledResponse: {
+            /** @constant */
+            ok: true;
+            /** @constant */
+            mfaEnabled: false;
+        };
+        MfaResetResponse: {
+            /** @constant */
+            ok: true;
+            targetUserId: string;
+        };
+        MySecurityResponse: {
+            mfaEnabled: boolean;
+            mfaRequired: boolean;
+            enrollmentExpiresAt: number | null;
+            /** Format: email */
+            email: string | null;
+            emailVerified: boolean;
+        };
+        WorkspaceSecurityUser: {
+            id: string;
+            username: string;
+            display_name: string | null;
+            /** Format: email */
+            email: string | null;
+            email_verified_at: number | null;
+            /** @enum {integer} */
+            is_admin: 0 | 1;
+            /** @enum {integer} */
+            mfa_enabled: 0 | 1;
+        };
+        WorkspaceSecurityResponse: {
+            requireMfaForHumans: boolean;
+            users: components["schemas"]["WorkspaceSecurityUser"][];
+            enrolledHumans: number;
+            totalHumans: number;
+            unverifiedHumans: number;
+        };
+        WorkspaceSecurityUpdateRequest: {
+            requireMfaForHumans: boolean;
+            currentPassword: string;
+            /** @description Required when the acting admin has authenticator MFA enabled. */
+            code?: string;
         };
         CurrentUser: {
             id: string;
@@ -2223,6 +2518,14 @@ export interface components {
             channel_id?: string | null;
             channelId?: string | null;
             channel_name?: string | null;
+            /**
+             * @description SQLite boolean flag included when the message is returned with conversation context.
+             * @enum {integer|null}
+             */
+            is_dm?: 0 | 1 | null;
+            dm_partner_id?: string | null;
+            dm_partner_username?: string | null;
+            dm_partner_display_name?: string | null;
             user_id?: string | null;
             userId?: string | null;
             username?: string | null;
@@ -2276,6 +2579,11 @@ export interface components {
             cursor?: string | null;
             hasNewer?: boolean;
             afterCursor?: string | null;
+        };
+        InboxPage: {
+            messages: components["schemas"]["Message"][];
+            total: number;
+            cursor: string | null;
         };
         SendMessageRequest: {
             /** @description Required unless attachmentIds is non-empty. */
@@ -3073,6 +3381,15 @@ export interface components {
                 "application/json": components["schemas"]["MessagePage"];
             };
         };
+        /** @description Unread Inbox page */
+        InboxPage: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["InboxPage"];
+            };
+        };
         /** @description Message response */
         Message: {
             headers: {
@@ -3229,13 +3546,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Authenticated user and Set-Cookie session header. */
+            /** @description Authenticated user or the next authenticator MFA step. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UserRecord"];
+                    "application/json": components["schemas"]["LoginResponse"];
                 };
             };
             400: components["responses"]["Error"];
@@ -3243,6 +3560,45 @@ export interface operations {
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
             429: components["responses"]["Error"];
+        };
+    };
+    postAuthMfaComplete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MfaCodeRequest"];
+            };
+        };
+        responses: {
+            /** @description MFA verified and authenticated session created. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoginCompleteResponse"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    postAuthMfaCancel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["Ok"];
         };
     };
     postAuthLogout: {
@@ -3617,6 +3973,111 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+        };
+    };
+    getUsersMeSecurity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current user's security state. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MySecurityResponse"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    postUsersMeMfaEnrollment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PasswordConfirmationRequest"];
+            };
+        };
+        responses: {
+            /** @description Authenticator setup details. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MfaEnrollmentSetup"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    postUsersMeMfaEnrollmentConfirm: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MfaCodeRequest"];
+            };
+        };
+        responses: {
+            /** @description Authenticator MFA enabled. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MfaEnabledResponse"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    deleteUsersMeMfa: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MfaReauthorizationRequest"];
+            };
+        };
+        responses: {
+            /** @description Authenticator MFA disabled. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MfaDisabledResponse"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            409: components["responses"]["Error"];
         };
     };
     postUsersMeEmailChange: {
@@ -4597,6 +5058,22 @@ export interface operations {
             404: components["responses"]["Error"];
         };
     };
+    getInbox: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["InboxPage"];
+            401: components["responses"]["Error"];
+        };
+    };
     getMessagesId: {
         parameters: {
             query?: never;
@@ -4650,6 +5127,23 @@ export interface operations {
         responses: {
             200: components["responses"]["Ok"];
             400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    postMessagesIdRead: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["Ok"];
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
@@ -6298,6 +6792,87 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+        };
+    };
+    deleteUsersIdMfa: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MfaReauthorizationRequest"];
+            };
+        };
+        responses: {
+            /** @description Authenticator credential removed and sessions revoked. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MfaResetResponse"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    getWorkspaceSecurity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Workspace security state. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceSecurityResponse"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    patchWorkspaceSecurity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceSecurityUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated workspace security state. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceSecurityResponse"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            409: components["responses"]["Error"];
         };
     };
     deleteUsersId: {

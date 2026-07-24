@@ -129,7 +129,10 @@ export interface components {
             metadata?: components["schemas"]["JsonObject"] | null;
             /** @enum {string} */
             message_type?: "human" | "response" | "progress" | "tool_output" | "thinking";
-            /** @enum {string} */
+            /**
+             * @description Human and final response events, including thread replies, contribute to unread state; progress, tool output, and thinking events do not.
+             * @enum {string}
+             */
             messageType?: "human" | "response" | "progress" | "tool_output" | "thinking";
         };
         ReactionAddClientEvent: {
@@ -304,7 +307,10 @@ export interface components {
             mentions: components["schemas"]["Mention"][];
             attachments: components["schemas"]["Attachment"][];
             metadata: components["schemas"]["JsonObject"] | null;
-            /** @enum {string} */
+            /**
+             * @description Human and final response events, including thread replies, contribute to unread state; progress, tool output, and thinking events do not.
+             * @enum {string}
+             */
             messageType?: "human" | "response" | "progress" | "tool_output" | "thinking";
             autoRespondBotId: components["schemas"]["NullableId"];
             processingMode: components["schemas"]["ProcessingMode"];

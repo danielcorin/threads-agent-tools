@@ -323,6 +323,7 @@ components:
         messageType:
           type: string
           enum: [human, response, progress, tool_output, thinking]
+          description: Human and final response events, including thread replies, contribute to unread state; progress, tool output, and thinking events do not.
       additionalProperties: false
     ReactionAddClientEvent:
       type: object
@@ -617,6 +618,7 @@ components:
         messageType:
           type: string
           enum: [human, response, progress, tool_output, thinking]
+          description: Human and final response events, including thread replies, contribute to unread state; progress, tool output, and thinking events do not.
         autoRespondBotId:
           $ref: '#/components/schemas/NullableId'
         processingMode:

@@ -35,15 +35,15 @@
           "auth"
         ],
         "summary": "POST /auth/login",
-        "description": "Authenticate with username and password. Returns the user record without password_hash and sets the session cookie.",
+        "description": "Authenticate with username and password. A normal login returns the user and sets a session cookie. If authenticator MFA is enabled or required, returns the next MFA step and sets a short-lived challenge cookie instead.",
         "parameters": [],
         "responses": {
           "200": {
-            "description": "Authenticated user and Set-Cookie session header.",
+            "description": "Authenticated user or the next authenticator MFA step.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UserRecord"
+                  "$ref": "#/components/schemas/LoginResponse"
                 }
               }
             }
@@ -74,6 +74,52 @@
             }
           }
         },
+        "x-route-boundary": "core"
+      }
+    },
+    "/auth/mfa/complete": {
+      "post": {
+        "operationId": "postAuthMfaComplete",
+        "tags": ["auth"],
+        "summary": "Complete authenticator MFA sign-in",
+        "description": "Verify a TOTP code against the short-lived MFA challenge cookie. Forced first-time enrollment is committed only after a valid code. On success, sets the normal session cookie.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "MFA verified and authenticated session created.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/LoginCompleteResponse" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "503": { "$ref": "#/components/responses/Error" }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/MfaCodeRequest" }
+            }
+          }
+        },
+        "security": [],
+        "x-route-boundary": "core"
+      }
+    },
+    "/auth/mfa/cancel": {
+      "post": {
+        "operationId": "postAuthMfaCancel",
+        "tags": ["auth"],
+        "summary": "Cancel authenticator MFA sign-in",
+        "description": "Invalidate the current short-lived MFA challenge and clear its cookie.",
+        "parameters": [],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Ok" }
+        },
+        "security": [],
         "x-route-boundary": "core"
       }
     },
@@ -741,6 +787,99 @@
             }
           }
         },
+        "x-route-boundary": "core"
+      }
+    },
+    "/users/me/security": {
+      "get": {
+        "operationId": "getUsersMeSecurity",
+        "tags": ["users", "auth"],
+        "summary": "Get current user's authenticator security state",
+        "description": "Return whether authenticator MFA is enabled and whether workspace policy requires it. Browser session authentication is required.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Current user's security state.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MySecurityResponse" } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "sessionCookie": [] }],
+        "x-route-boundary": "core"
+      }
+    },
+    "/users/me/mfa/enrollment": {
+      "post": {
+        "operationId": "postUsersMeMfaEnrollment",
+        "tags": ["users", "auth"],
+        "summary": "Start voluntary authenticator MFA enrollment",
+        "description": "Re-authorize with the current password and create a ten-minute authenticator setup secret. The user must have a verified recovery email. The provisioning URI uses the full tenant hostname as its issuer and the verified email as its account label. Browser session authentication is required.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Authenticator setup details.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MfaEnrollmentSetup" } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "503": { "$ref": "#/components/responses/Error" }
+        },
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PasswordConfirmationRequest" } } }
+        },
+        "security": [{ "sessionCookie": [] }],
+        "x-route-boundary": "core"
+      }
+    },
+    "/users/me/mfa/enrollment/confirm": {
+      "post": {
+        "operationId": "postUsersMeMfaEnrollmentConfirm",
+        "tags": ["users", "auth"],
+        "summary": "Confirm authenticator MFA enrollment",
+        "description": "Verify a TOTP code for the pending setup and enable authenticator MFA. A verified recovery email remains required through confirmation. Browser session authentication is required.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Authenticator MFA enabled.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MfaEnabledResponse" } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        },
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MfaCodeRequest" } } }
+        },
+        "security": [{ "sessionCookie": [] }],
+        "x-route-boundary": "core"
+      }
+    },
+    "/users/me/mfa": {
+      "delete": {
+        "operationId": "deleteUsersMeMfa",
+        "tags": ["users", "auth"],
+        "summary": "Disable authenticator MFA",
+        "description": "Re-authorize with the current password and a fresh TOTP code, then disable authenticator MFA. Rejected while workspace policy requires MFA.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Authenticator MFA disabled.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MfaDisabledResponse" } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        },
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MfaReauthorizationRequest" } } }
+        },
+        "security": [{ "sessionCookie": [] }],
         "x-route-boundary": "core"
       }
     },
@@ -2820,6 +2959,54 @@
         "x-route-boundary": "core"
       }
     },
+    "/inbox": {
+      "get": {
+        "operationId": "getInbox",
+        "tags": [
+          "messages"
+        ],
+        "summary": "List unread Inbox messages",
+        "description": "List incoming unread human messages and final agent responses across channels and DMs. Thread replies are included. Reading this endpoint does not change read state.",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/InboxPage"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-route-boundary": "core"
+      }
+    },
     "/messages/{id}": {
       "get": {
         "operationId": "getMessagesId",
@@ -2942,6 +3129,49 @@
           },
           "400": {
             "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-route-boundary": "core"
+      }
+    },
+    "/messages/{id}/read": {
+      "post": {
+        "operationId": "postMessagesIdRead",
+        "tags": [
+          "messages"
+        ],
+        "summary": "Mark one message read",
+        "description": "Acknowledge one message for the current user without advancing the containing channel's bulk read cursor.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
           },
           "401": {
             "$ref": "#/components/responses/Error"
@@ -6683,6 +6913,81 @@
         "x-route-boundary": "core"
       }
     },
+    "/users/{id}/mfa": {
+      "delete": {
+        "operationId": "deleteUsersIdMfa",
+        "tags": ["users", "auth"],
+        "summary": "Reset a user's authenticator MFA",
+        "description": "Admin recovery action. Re-authorizes the admin, removes the target human user's authenticator credential, and revokes all target sessions. Admins cannot reset themselves; browser session authentication is required.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authenticator credential removed and sessions revoked.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MfaResetResponse" } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        },
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MfaReauthorizationRequest" } } }
+        },
+        "security": [{ "sessionCookie": [] }],
+        "x-route-boundary": "core"
+      }
+    },
+    "/workspace/security": {
+      "get": {
+        "operationId": "getWorkspaceSecurity",
+        "tags": ["users", "auth"],
+        "summary": "Get workspace authenticator MFA policy",
+        "description": "Return workspace enforcement state and per-human-user recovery email and enrollment readiness. Admin browser session authentication is required.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Workspace security state.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkspaceSecurityResponse" } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "sessionCookie": [] }],
+        "x-route-boundary": "core"
+      },
+      "patch": {
+        "operationId": "patchWorkspaceSecurity",
+        "tags": ["users", "auth"],
+        "summary": "Update workspace authenticator MFA policy",
+        "description": "Re-authorize the admin and enable or disable enforcement for human users. Enabling is blocked until the admin has MFA and every human user has a verified recovery email.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Updated workspace security state.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkspaceSecurityResponse" } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        },
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkspaceSecurityUpdateRequest" } } }
+        },
+        "security": [{ "sessionCookie": [] }],
+        "x-route-boundary": "core"
+      }
+    },
     "/users/{id}": {
       "delete": {
         "operationId": "deleteUsersId",
@@ -7037,6 +7342,179 @@
           }
         },
         "additionalProperties": true
+      },
+      "LoginCompleteResponse": {
+        "allOf": [
+          { "$ref": "#/components/schemas/UserRecord" },
+          {
+            "type": "object",
+            "required": ["next"],
+            "properties": {
+              "next": { "type": "string", "const": "complete" }
+            }
+          }
+        ]
+      },
+      "MfaSetup": {
+        "type": "object",
+        "required": ["secret", "otpauthUri"],
+        "properties": {
+          "secret": {
+            "type": "string",
+            "pattern": "^[A-Z2-7]+$",
+            "description": "Base32 TOTP secret for manual authenticator setup. Treat as sensitive and do not persist after enrollment."
+          },
+          "otpauthUri": {
+            "type": "string",
+            "pattern": "^otpauth://totp/",
+            "description": "Provisioning URI suitable for a locally rendered QR code."
+          }
+        },
+        "additionalProperties": false
+      },
+      "MfaEnrollmentSetup": {
+        "type": "object",
+        "required": ["secret", "otpauthUri", "expiresAt"],
+        "properties": {
+          "secret": { "type": "string", "pattern": "^[A-Z2-7]+$" },
+          "otpauthUri": { "type": "string", "pattern": "^otpauth://totp/" },
+          "expiresAt": { "type": "integer", "description": "Unix timestamp when this setup expires." }
+        },
+        "additionalProperties": false
+      },
+      "LoginResponse": {
+        "oneOf": [
+          { "$ref": "#/components/schemas/LoginCompleteResponse" },
+          {
+            "type": "object",
+            "required": ["next"],
+            "properties": {
+              "next": { "type": "string", "const": "verify_mfa" }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": ["next", "setup"],
+            "properties": {
+              "next": { "type": "string", "const": "enroll_mfa" },
+              "setup": { "$ref": "#/components/schemas/MfaSetup" }
+            },
+            "additionalProperties": false
+          }
+        ],
+        "discriminator": { "propertyName": "next" }
+      },
+      "MfaCodeRequest": {
+        "type": "object",
+        "required": ["code"],
+        "properties": {
+          "code": { "type": "string", "pattern": "^[0-9]{6}$" }
+        },
+        "additionalProperties": false
+      },
+      "PasswordConfirmationRequest": {
+        "type": "object",
+        "required": ["currentPassword"],
+        "properties": {
+          "currentPassword": { "type": "string", "minLength": 1 }
+        },
+        "additionalProperties": false
+      },
+      "MfaReauthorizationRequest": {
+        "type": "object",
+        "required": ["currentPassword"],
+        "properties": {
+          "currentPassword": { "type": "string", "minLength": 1 },
+          "code": {
+            "type": "string",
+            "pattern": "^[0-9]{6}$",
+            "description": "Required when the acting account has authenticator MFA enabled."
+          }
+        },
+        "additionalProperties": false
+      },
+      "MfaEnabledResponse": {
+        "type": "object",
+        "required": ["ok", "mfaEnabled"],
+        "properties": {
+          "ok": { "type": "boolean", "const": true },
+          "mfaEnabled": { "type": "boolean", "const": true }
+        },
+        "additionalProperties": false
+      },
+      "MfaDisabledResponse": {
+        "type": "object",
+        "required": ["ok", "mfaEnabled"],
+        "properties": {
+          "ok": { "type": "boolean", "const": true },
+          "mfaEnabled": { "type": "boolean", "const": false }
+        },
+        "additionalProperties": false
+      },
+      "MfaResetResponse": {
+        "type": "object",
+        "required": ["ok", "targetUserId"],
+        "properties": {
+          "ok": { "type": "boolean", "const": true },
+          "targetUserId": { "type": "string" }
+        },
+        "additionalProperties": false
+      },
+      "MySecurityResponse": {
+        "type": "object",
+        "required": ["mfaEnabled", "mfaRequired", "enrollmentExpiresAt", "email", "emailVerified"],
+        "properties": {
+          "mfaEnabled": { "type": "boolean" },
+          "mfaRequired": { "type": "boolean" },
+          "enrollmentExpiresAt": { "type": ["integer", "null"] },
+          "email": { "type": ["string", "null"], "format": "email" },
+          "emailVerified": { "type": "boolean" }
+        },
+        "additionalProperties": false
+      },
+      "WorkspaceSecurityUser": {
+        "type": "object",
+        "required": ["id", "username", "display_name", "email", "email_verified_at", "is_admin", "mfa_enabled"],
+        "properties": {
+          "id": { "type": "string" },
+          "username": { "type": "string" },
+          "display_name": { "type": ["string", "null"] },
+          "email": { "type": ["string", "null"], "format": "email" },
+          "email_verified_at": { "type": ["integer", "null"] },
+          "is_admin": { "type": "integer", "enum": [0, 1] },
+          "mfa_enabled": { "type": "integer", "enum": [0, 1] }
+        },
+        "additionalProperties": false
+      },
+      "WorkspaceSecurityResponse": {
+        "type": "object",
+        "required": ["requireMfaForHumans", "users", "enrolledHumans", "totalHumans", "unverifiedHumans"],
+        "properties": {
+          "requireMfaForHumans": { "type": "boolean" },
+          "users": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/WorkspaceSecurityUser" }
+          },
+          "enrolledHumans": { "type": "integer", "minimum": 0 },
+          "totalHumans": { "type": "integer", "minimum": 0 },
+          "unverifiedHumans": { "type": "integer", "minimum": 0 }
+        },
+        "additionalProperties": false
+      },
+      "WorkspaceSecurityUpdateRequest": {
+        "type": "object",
+        "required": ["requireMfaForHumans", "currentPassword"],
+        "properties": {
+          "requireMfaForHumans": { "type": "boolean" },
+          "currentPassword": { "type": "string", "minLength": 1 },
+          "code": {
+            "type": "string",
+            "pattern": "^[0-9]{6}$",
+            "description": "Required when the acting admin has authenticator MFA enabled."
+          }
+        },
+        "additionalProperties": false
       },
       "CurrentUser": {
         "type": "object",
@@ -7814,6 +8292,36 @@
               "null"
             ]
           },
+          "is_dm": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "enum": [
+              0,
+              1,
+              null
+            ],
+            "description": "SQLite boolean flag included when the message is returned with conversation context."
+          },
+          "dm_partner_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dm_partner_username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dm_partner_display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "user_id": {
             "type": [
               "string",
@@ -8128,6 +8636,33 @@
             "type": "boolean"
           },
           "afterCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "InboxPage": {
+        "type": "object",
+        "required": [
+          "messages",
+          "total",
+          "cursor"
+        ],
+        "properties": {
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Message"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cursor": {
             "type": [
               "string",
               "null"
@@ -11089,6 +11624,16 @@
           "application/json": {
             "schema": {
               "$ref": "#/components/schemas/MessagePage"
+            }
+          }
+        }
+      },
+      "InboxPage": {
+        "description": "Unread Inbox page",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/InboxPage"
             }
           }
         }
