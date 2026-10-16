@@ -50,7 +50,7 @@ jobs:
         with:
           subject-path: cli/dist/cli/${{ matrix.filename }}
       - name: Upload native executable
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: threads-cli-${{ matrix.target }}-${{ github.sha }}
           path: cli/dist/cli/${{ matrix.filename }}
