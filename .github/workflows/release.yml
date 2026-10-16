@@ -72,7 +72,7 @@ jobs:
         with:
           go-version: '1.24.x'
           cache-dependency-path: bridge/go.sum
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: threads-cli-*-${{ github.sha }}
           path: dist/cli
